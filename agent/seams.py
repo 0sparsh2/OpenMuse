@@ -45,6 +45,14 @@ class BrowserObservation:
     title: str
     accessibility_tree: str = ""
     screenshot_ref: str = ""
+    # Phase 4 extensions (all optional; older readers keep working).
+    navigation_id: int = 0
+    origin: str = ""
+    interactive_elements: list = field(default_factory=list)  # stable el_<nav>_<n> ids
+    forms: list = field(default_factory=list)
+    challenges: list = field(default_factory=list)  # e.g. ["captcha"]
+    session_state: str = "active"  # active | challenged | closed
+    captured_at: str = ""
 
 
 class BrowserOperator(abc.ABC):
@@ -53,7 +61,34 @@ class BrowserOperator(abc.ABC):
         raise NotImplementedError("browser computer use arrives in Phase 4")
 
     @abc.abstractmethod
-    def act(self, session_id: str, action: dict) -> BrowserObservation:
+    def act(self, session_id: str, action: dict) -> dict:
+        """Execute one grounded action; return a result envelope dict.
+
+        The envelope always carries the fresh observation; it may also carry
+        a challenge handoff, a commit proposal, or a deterministic refusal
+        (stale element, pacing, egress, evasion). Phase 4.
+        """
+        raise NotImplementedError("browser computer use arrives in Phase 4")
+
+    # -- Phase 4 session lifecycle (concrete defaults; the operator overrides)
+    def start_session(self, tenant_id: str) -> str:
+        raise NotImplementedError("browser computer use arrives in Phase 4")
+
+    def close_session(self, session_id: str) -> dict:
+        raise NotImplementedError("browser computer use arrives in Phase 4")
+
+    def checkpoint(self, session_id: str, label: str) -> dict:
+        raise NotImplementedError("browser computer use arrives in Phase 4")
+
+    def recover(self, session_id: str) -> dict:
+        raise NotImplementedError("browser computer use arrives in Phase 4")
+
+    def attach_session(self, session_id: str) -> dict:
+        """Re-attach a persisted session (e.g. after operator restart). Phase 4."""
+        raise NotImplementedError("browser computer use arrives in Phase 4")
+
+    def mark_challenge_resolved(self, session_id: str, *, by: str = "user") -> dict:
+        """Record that the USER resolved a challenge out-of-band. Phase 4."""
         raise NotImplementedError("browser computer use arrives in Phase 4")
 
 

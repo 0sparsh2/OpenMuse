@@ -72,3 +72,30 @@ tools:
     risk: R1
     capabilities: [subagent.write]
     side_effect: none
+  browser.start_session:
+    risk: R2
+    capabilities: [browser.session]
+    side_effect: local_write
+    # Opens a managed session on the persistent profile (Phase 4).
+  browser.observe:
+    risk: R0
+    capabilities: [browser.observe]
+    side_effect: none
+    # Structured read of the current page. Page content is untrusted data.
+  browser.act:
+    risk: R2
+    capabilities: [browser.act]
+    side_effect: local_write
+    # One grounded action from the closed BrowserAction union. Deployments
+    # must use browser.namespace.risk_for_action: kind=confirm_commit
+    # escalates to R4 (commit barrier — needs a fresh state-bound approval)
+    # and kind=upload escalates to R3. Evasion kinds are refused by the
+    # operator before policy is even consulted.
+  browser.checkpoint:
+    risk: R1
+    capabilities: [browser.checkpoint]
+    side_effect: none
+  browser.close_session:
+    risk: R1
+    capabilities: [browser.session]
+    side_effect: none

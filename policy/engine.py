@@ -93,10 +93,11 @@ class PolicyEngine:
                 ASK, "APPROVAL_REQUIRED", approval_template=template,
                 safe_explanation=f"{inp.tool_name} needs your approval before it runs.")
 
-        # 5. External communication and above are not wired in Phase 1.
+        # 5. External communication and above need an explicit bound approval.
         if inp.risk in ("R3", "R4"):
-            return PolicyDecision(DENY, "NOT_IMPLEMENTED_PHASE1",
-                                  f"{inp.tool_name} requires a Phase 3+ capability that is not enabled.")
+            return PolicyDecision(DENY, "APPROVAL_REQUIRED_HIGH_RISK",
+                                  f"{inp.tool_name} is high-risk and needs a "
+                                  "valid bound approval to run.")
 
         return PolicyDecision(DENY, "NO_MATCHING_RULE",
                               f"No policy rule allows {inp.tool_name}; failing closed.")
