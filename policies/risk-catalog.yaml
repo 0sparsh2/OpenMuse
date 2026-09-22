@@ -1,0 +1,15 @@
+# Risk catalog — policies/risk-catalog.yaml
+# Mirrors the blueprint's R0-R5 classes. The classifier may raise risk, never lower it.
+risk_classes:
+  R0:
+    description: "Read-only, low sensitivity: public web read, local metadata read."
+  R1:
+    description: "Private read: email, calendar, personal files, financial balances."
+  R2:
+    description: "Reversible local write: create draft, write workspace file, update local note."
+  R3:
+    description: "External communication: send email/message, publish, invite."
+  R4:
+    description: "Financial/legal/security: purchase, transfer, sign, change credentials, account recovery."
+  R5:
+    description: "Destructive or prohibited: permanent deletion without recovery, privilege escalation, policy bypass, unsafe destinations."

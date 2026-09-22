@@ -1,0 +1,41 @@
+# Tool -> risk mapping — policies/tool-capabilities.yaml
+# A deployment maps each tool capability and argument pattern to a baseline class.
+# Phase 1 ships R0-R2 tools only. Later phases add R3-R5 tools here.
+tools:
+  system.clock:
+    risk: R0
+    capabilities: [time.read]
+    side_effect: none
+  math.calc:
+    risk: R0
+    capabilities: [math.eval]
+    side_effect: none
+  files.read:
+    risk: R0
+    capabilities: [filesystem.read.scoped]
+    side_effect: none
+  files.list:
+    risk: R0
+    capabilities: [filesystem.read.scoped]
+    side_effect: none
+  web.fetch:
+    risk: R0
+    capabilities: [network.fetch.public]
+    side_effect: none
+  tools.load_namespace:
+    risk: R0
+    capabilities: [tools.discover]
+    side_effect: none
+  files.write:
+    risk: R2
+    capabilities: [filesystem.write.scoped]
+    side_effect: local_write
+  memory.note:
+    risk: R2
+    capabilities: [memory.write]
+    side_effect: local_write
+  shell.exec:
+    risk: R2
+    capabilities: [shell.exec.scoped]
+    side_effect: local_write
+    # Deterministic command guard runs before policy: destructive patterns are DENY (R5).
