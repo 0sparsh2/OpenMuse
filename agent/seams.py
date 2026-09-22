@@ -21,6 +21,12 @@ class DelegationRequest:
     allowed_namespaces: list[str]          # capability ceiling for the child
     budget_carve: dict = field(default_factory=dict)  # carved from parent, never additive
     max_depth: int = 1
+    # Phase 3 extensions (all optional; older callers keep working).
+    parent_run_id: str = ""
+    output_contract: dict = field(default_factory=dict)  # JSON schema for the handoff
+    context_refs: list = field(default_factory=list)     # typed, bounded refs only
+    join_policy: str = "all"
+    explicit_writes: list[str] = field(default_factory=list)  # named external writes
 
 
 class SubagentRunner(abc.ABC):

@@ -1,0 +1,8 @@
+# skill test fixture: memory-hygiene
+cases:
+  - query: "tidy my memories and consolidate notes"
+    expect_selected: true
+  - query: "clean up memory, drop stale facts"
+    expect_selected: true
+  - query: "calculate the quarterly revenue"
+    expect_selected: false

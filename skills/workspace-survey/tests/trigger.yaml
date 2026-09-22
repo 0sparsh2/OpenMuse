@@ -1,0 +1,11 @@
+# skill test fixture: workspace-survey
+# Each case: a user query -> expected selection outcome.
+cases:
+  - query: "survey the project structure of this repo"
+    expect_selected: true
+  - query: "give me an inventory of the codebase"
+    expect_selected: true
+  - query: "what is in this repo"
+    expect_selected: true
+  - query: "send an email to the team"
+    expect_selected: false

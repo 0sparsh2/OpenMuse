@@ -121,6 +121,9 @@ class ExecutionContext:
     event_log: EventLog
     approval_grant_id: str = ""  # set when this call runs under an ASK grant
     deadline_ms: int = 30_000
+    # Phase 3: child agents get an isolated scratch memory root so their
+    # memory.* tools never touch the parent's `.agent-memory`.
+    memory_root: Optional[str] = None
 
 
 def _utcnow() -> str:

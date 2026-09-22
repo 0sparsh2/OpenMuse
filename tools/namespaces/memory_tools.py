@@ -20,15 +20,19 @@ from memory.layered import LayeredMemory
 from tools.registry import ToolDefinition, ToolRegistry
 
 
-def _layered(workspace_root: str) -> LayeredMemory:
-    return LayeredMemory(os.path.join(workspace_root, ".agent-memory"))
+def _layered(ctx) -> LayeredMemory:
+    # Phase 3: a child-scoped memory_root isolates child memory.* tools from
+    # the parent's store. None (normal runs) falls back to the workspace root.
+    mem_root = getattr(ctx, "memory_root", None)
+    root = mem_root or os.path.join(ctx.workspace_root, ".agent-memory")
+    return LayeredMemory(root)
 
 
 def register(registry: ToolRegistry) -> None:
     registry.register_namespace("memory", "Durable user memory (Phase 2: layered memory).")
 
     def note(ctx, args):
-        mem = _layered(ctx.workspace_root)
+        mem = _layered(ctx)
         result = mem.remember(args["note"].strip(), source_ref="memory.note")
         entry = mem.journal.get(result["journal_entry_id"])
         day_file = (os.path.join(mem.journal.root, entry.timestamp[:10] + ".md")
@@ -64,7 +68,7 @@ def register(registry: ToolRegistry) -> None:
     ))
 
     def recall(ctx, args):
-        mem = _layered(ctx.workspace_root)
+        mem = _layered(ctx)
         results = mem.recall(args["query"],
                              top_k=min(int(args.get("top_k", 5)), 10),
                              sources=args.get("sources") or None,
@@ -100,7 +104,7 @@ def register(registry: ToolRegistry) -> None:
     ))
 
     def forget(ctx, args):
-        mem = _layered(ctx.workspace_root)
+        mem = _layered(ctx)
         mode = args.get("mode", "tombstone")
         if mode not in ("tombstone", "delete"):
             mode = "tombstone"

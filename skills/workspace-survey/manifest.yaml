@@ -1,0 +1,14 @@
+name: workspace-survey
+version: 1.0.0
+description: Survey a workspace directory with files.list/files.read and produce a structured inventory of directories, entry points, and notes.
+triggers:
+  - survey
+  - inventory
+  - codebase map
+  - project structure
+  - what is in this repo
+required_namespaces: [files]
+capabilities_used: [filesystem.read.scoped]
+risk_notes:
+  - Read-only skill; no writes, no execution.
+max_prompt_tokens: 2000

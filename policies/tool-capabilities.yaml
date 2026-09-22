@@ -50,3 +50,25 @@ tools:
     capabilities: [shell.exec.scoped]
     side_effect: local_write
     # Deterministic command guard runs before policy: destructive patterns are DENY (R5).
+  subagent.spawn:
+    risk: R2
+    capabilities: [subagent.spawn]
+    side_effect: local_write
+    # Spawning carves budget from the parent (never additive) and intersects
+    # capabilities; needs a bound approval like other local writes.
+  subagent.list:
+    risk: R0
+    capabilities: [subagent.read]
+    side_effect: none
+  subagent.status:
+    risk: R0
+    capabilities: [subagent.read]
+    side_effect: none
+  subagent.send:
+    risk: R2
+    capabilities: [subagent.write]
+    side_effect: local_write
+  subagent.close:
+    risk: R1
+    capabilities: [subagent.write]
+    side_effect: none

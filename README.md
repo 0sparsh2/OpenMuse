@@ -1,4 +1,4 @@
-# muse-replica — Phase 2: layered memory (on the Phase 1 agent loop + tool runtime)
+# muse-replica — Phase 3: skills + subagents (on the Phase 1 agent loop + Phase 2 memory)
 
 A from-scratch reimplementation of the Muse-style personal-agent architecture,
 built from the build blueprint (`../your_files/muse-replica-build-blueprint/`).
@@ -118,9 +118,34 @@ the next provider in the route.
 
 ## What's next (per blueprint)
 
-- **Phase 3** — skills + subagents (`agent/seams.py::SubagentRunner`)
 - **Phase 4** — browser computer use (`agent/seams.py::BrowserOperator`)
 - **Phase 5** — crons + hooks (`agent/seams.py::Scheduler`)
+
+## Phase 3 — skills and subagents
+
+```
+  subagents/
+    models.py         # DelegationRecord, ChildBudget, ChildResult, join policies
+    skills.py         # skill catalog, loader, validator, hybrid selection,
+                      # version pinning; only selected skill text enters context
+    runner.py         # SubagentRunner: spawn/status/send/close/cancel, child
+                      # turn loop, capability intersection, budget carving,
+                      # depth caps, parent-routed approvals, memory isolation
+    coordinator.py    # fan-out/fan-in (all/any/quorum), pipeline joins,
+                      # typed parent synthesis with evidence_refs
+    namespace.py      # subagent.* tools: spawn (R2), list/status (R0),
+                      # send (R2), close (R1)
+  skills/
+    workspace-survey/ # reference skill: files.* codebase inventory
+    memory-hygiene/   # reference skill: memory.* consolidation
+  prompts/subagent-child.md  # the blueprint's child system prompt
+  prompts/coordinator.md     # parent synthesis rules
+```
+
+Run `python3 demo_subagents.py` (24/24 checks): spawn → tools under policy →
+typed handoff → close; fan-out/fan-in + pipeline; ceiling denials; skill
+selection; depth-loop blocking; cancellation propagation; budget carving;
+child memory isolation; send() refinement.
 
 ## Phase 2 — layered memory
 

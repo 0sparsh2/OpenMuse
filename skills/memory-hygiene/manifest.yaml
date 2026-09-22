@@ -1,0 +1,13 @@
+name: memory-hygiene
+version: 1.0.0
+description: Tidy and consolidate stored memories with memory.recall, memory.note, and memory.forget — merge duplicates, drop stale facts, keep durable ones.
+triggers:
+  - tidy my memories
+  - consolidate notes
+  - clean up memory
+  - review stored facts
+required_namespaces: [memory]
+capabilities_used: [memory.read, memory.write, memory.forget]
+risk_notes:
+  - Forgetting is user-directed and plan-first; ambiguous targets are never deleted.
+max_prompt_tokens: 2000
