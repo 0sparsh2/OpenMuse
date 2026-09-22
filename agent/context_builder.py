@@ -63,7 +63,13 @@ class ContextBuilder:
             self._tool_addendum = fh.read()
 
     # -- public ------------------------------------------------------------
-    def build(self, run: Run) -> BuiltContext:
+    def build(self, run: Run, working_memory=None) -> BuiltContext:
+        """Assemble the turn context.
+
+        working_memory: optional memory.WorkingMemory rendered as a delimited
+        turn-scoped block (layer 6, after identity snippets). None preserves
+        Phase 1 behavior exactly.
+        """
         now = datetime.now(timezone.utc)
 
         # 1. system policy prompt
@@ -86,6 +92,13 @@ class ContextBuilder:
 
         messages = [ChatMessage(role="system", blocks=[Block(kind="text", text=system_text)])]
         messages.extend(memory_blocks)
+        if working_memory is not None:
+            wm_text = working_memory.render()
+            if wm_text:
+                messages.append(ChatMessage(
+                    role="system",
+                    blocks=[Block(kind="text", text="WORKING MEMORY (turn-scoped):\n" + wm_text)],
+                ))
         messages.extend(run.messages)  # 2,3,7,8 live here as typed blocks
 
         metadata = RequestMetadata(

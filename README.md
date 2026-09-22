@@ -1,11 +1,11 @@
-# muse-replica — Phase 1: core agent loop + tool runtime
+# muse-replica — Phase 2: layered memory (on the Phase 1 agent loop + tool runtime)
 
 A from-scratch reimplementation of the Muse-style personal-agent architecture,
 built from the build blueprint (`../your_files/muse-replica-build-blueprint/`).
 Phase 1 covers the **durable single-agent turn engine** and the **tool runtime**
-with a provider-neutral model gateway. Later phases (memory layers, skills +
-subagents, browser computer use, scheduler, connectors) plug into the seams
-left here.
+with a provider-neutral model gateway. Phase 2 adds the **layered memory
+system**. Later phases (skills + subagents, browser computer use, scheduler,
+connectors) plug into the seams left here.
 
 ## Layout
 
@@ -118,7 +118,40 @@ the next provider in the route.
 
 ## What's next (per blueprint)
 
-- **Phase 2** — layered memory (`memory/store.py` is the seam), compaction, identity files
 - **Phase 3** — skills + subagents (`agent/seams.py::SubagentRunner`)
 - **Phase 4** — browser computer use (`agent/seams.py::BrowserOperator`)
 - **Phase 5** — crons + hooks (`agent/seams.py::Scheduler`)
+
+## Phase 2 — layered memory
+
+```
+  memory/
+    layered.py        # facade: remember / recall / forget across all layers
+    records.py        # MemoryRecord, JournalEntry, DerivationEdge, candidates
+    curated.py        # structured durable records + MEMORY.md projection + hybrid recall
+    journal.py        # episodic daily notes (append-only, event-linked)
+    people.py         # relationship pages + conservative entity resolution
+    vector_index.py   # file-backed cosine-similarity index (pgvector seam)
+    embeddings.py     # EmbeddingProvider; deterministic offline embedder;
+                      # OpenAICompatibleEmbedder for production (OPENAI_API_KEY)
+    consolidation.py  # deterministic extractor + consolidator
+                      # (add / reinforce / refine / supersede / journal_only / reject)
+    forgetting.py     # plan -> delete/tombstone -> regenerate -> audit -> verify
+    derivation.py     # forget graph: message -> candidate -> memory -> projection
+    working.py        # turn-scoped scratchpad, injected into context as a block
+    maintenance.py    # background maintainer interface (scheduler seam)
+    store.py          # Phase 1 MemoryStore interface, now layered-backed
+  tools/namespaces/memory_tools.py  # memory.note (R2), memory.recall (R1),
+                                    # memory.forget (R2, plan-first, ambiguous-safe)
+  prompts/memory-extractor.md, memory-consolidator.md, memory-maintenance.md,
+          forget-planner.md, recall-planner.md, compactor.md
+```
+
+Recall ranking follows the blueprint's hybrid formula
+(0.35 semantic + 0.20 lexical + 0.15 recency + 0.15 authority +
+0.10 commitment + 0.05 user-confirmed, minus duplicate/contradiction
+penalties) with MMR diversification. Superseded records are excluded unless
+`include_history=True`. Forgetting is plan-first: ambiguous targets are never
+deleted; tombstone is the default (non-content audit marker retained).
+
+Run the memory verification: `python3 demo_memory.py` (35 checks).

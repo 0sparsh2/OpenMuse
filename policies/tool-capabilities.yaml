@@ -34,6 +34,17 @@ tools:
     risk: R2
     capabilities: [memory.write]
     side_effect: local_write
+  memory.recall:
+    risk: R1
+    capabilities: [memory.read]
+    side_effect: none
+  memory.forget:
+    risk: R2
+    capabilities: [memory.forget]
+    side_effect: local_write
+    # User-directed forgetting: conservative plan-first; ambiguous targets
+    # are never deleted. Tombstone is the default mode (non-content audit
+    # marker retained); full row deletion only in "delete" mode.
   shell.exec:
     risk: R2
     capabilities: [shell.exec.scoped]
