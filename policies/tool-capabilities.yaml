@@ -143,3 +143,40 @@ tools:
     risk: R0
     capabilities: [scheduler.read]
     side_effect: none
+  connector.connect:
+    risk: R2
+    capabilities: [connector.manage]
+    side_effect: local_write
+    # Starts an OAuth PKCE ceremony or consumes a Secure Vault API-key
+    # capture. Raw secrets never pass through tool arguments.
+  connector.complete_oauth:
+    risk: R2
+    capabilities: [connector.manage]
+    side_effect: local_write
+    # Server-side code exchange; the token goes straight to the vault.
+  connector.status:
+    risk: R0
+    capabilities: [connector.read]
+    side_effect: none
+    # Health + declared capabilities only; never credential material.
+  connector.disconnect:
+    risk: R2
+    capabilities: [connector.manage]
+    side_effect: local_write
+    # Revokes provider tokens where supported and deletes vault material.
+  connector.github.get_repo:
+    risk: R0
+    capabilities: [connector.github.read]
+    side_effect: none
+    # Read-only metadata; requires the repo.read scope on the connection.
+  connector.github.star:
+    risk: R3
+    capabilities: [connector.github.write]
+    side_effect: external_write
+    # Low-risk external write on the user's account: needs a valid bound
+    # approval and the repo.write scope. Grant is single-use.
+  connector.github.unstar:
+    risk: R3
+    capabilities: [connector.github.write]
+    side_effect: external_write
+    # Same approval treatment as star.

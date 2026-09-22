@@ -112,13 +112,55 @@ the next provider in the route.
 - Tool results are labeled `trust="untrusted"`; the system prompt and the
   policy engine both treat them as data, never instructions.
 - Secrets are redacted from every model-visible view (`tools/redaction.py`).
-  Never put raw credentials in tool arguments — Phase 6 adds the vault.
+  Never put raw credentials in tool arguments — Phase 6 added the vault
+  (`connectors/`); the model works with connection ids only.
 - `RunStore` is in-memory in Phase 1; the interface is keyed for a persistent
   backing store (the blueprint's outbox/event-sourced runs).
 
 ## What's next (per blueprint)
 
-- **Phase 6** — connectors and secure credential use (`agent/seams.py`)
+- **Phase 7** — safety hardening and adversarial readiness
+
+## Phase 6 — connectors and secure credential use
+
+```
+  connectors/
+    registry.py       # ConnectorRegistry: manifest enforcement, connection
+                      # flows, single-call credential handles, scope checks,
+                      # terminal rate-limit hard stop, disconnect revocation,
+                      # secret-leak scanning, observability events
+    vault.py          # Vault seam + MemoryVault dev substitute: opaque
+                      # vault:// refs bound to (tenant, provider, account,
+                      # purpose); Secure Vault capture flow; leak scanning
+    oauth.py          # mock OAuth 2.0 PKCE flow: state+verifier bound to
+                      # tenant/scopes/expiry; server-side code exchange;
+                      # token material vaulted, never returned
+    rest.py           # RESTConnector base: error taxonomy (incl.
+                      # RATE_LIMIT_TERMINAL), deterministic pagination;
+                      # injectable Transport (MockTransport offline)
+    github.py         # reference connector: get_repo (R0), star/unstar (R3
+                      # external writes needing bound approvals)
+    one_time_code.py  # protected OTP route: the agent sees only
+                      # success/failure, never the code
+    namespace.py      # connector.* tools: connect/complete_oauth (R2),
+                      # status (R0), disconnect (R2), plus one tool per
+                      # declared operation (connector.<name>.<op>)
+  prompts/connector-operator.md
+```
+
+The model never handles raw secrets: tools take connection ids, the
+registry resolves vault references into short-lived handles scoped to one
+call, and adapter output is scanned for credential leaks before it reaches
+the model. Scope expansion requires a new consent ceremony; a terminal
+provider limit stops that account for the run; disconnect deletes vault
+material and later calls fail closed.
+
+Run `python3 demo_connectors.py` (54/54 checks): manifest declaration,
+OAuth PKCE + API-key-capture flows, read under policy, scope enforcement,
+approval-bound external writes (single-use, tamper-void), hard rate-limit
+stop, leak guard, disconnect, protected one-time codes, scope-expansion
+ceremony, tenant isolation, and all `connector.*` tools through the
+registry.
 
 ## Phase 5 — scheduler, hooks, and proactive delivery
 

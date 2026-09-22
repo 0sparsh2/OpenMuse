@@ -105,3 +105,26 @@ class Scheduler(abc.ABC):
     def register_hook(self, *, name: str, event: str, instructions: str) -> str:
         """Register an event-driven hook; return its id. Phase 5."""
         raise NotImplementedError("hooks arrive in Phase 5")
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — connectors and secure credential use
+# ---------------------------------------------------------------------------
+class ConnectorProvider(abc.ABC):
+    """Seam for authenticated third-party service access.
+
+    The concrete implementation lives in connectors/ (ConnectorRegistry).
+    Tools and runs see connection ids only; the registry resolves vault
+    references into short-lived handles scoped to one call.
+    """
+
+    @abc.abstractmethod
+    def status(self, *, tenant_id: str, connection_id: str) -> dict:
+        """Connection health + declared capabilities; never credential material."""
+        raise NotImplementedError("connectors arrive in Phase 6")
+
+    @abc.abstractmethod
+    def call(self, *, run_id: str, tenant_id: str, connection_id: str,
+             op: str, args: dict) -> dict:
+        """Execute one declared operation under scope and policy enforcement."""
+        raise NotImplementedError("connectors arrive in Phase 6")
