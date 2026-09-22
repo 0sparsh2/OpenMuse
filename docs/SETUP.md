@@ -1,6 +1,6 @@
 # OpenMuse — setup and run instructions
 
-Full-platform guide for the completed 9-phase build. Everything runs on
+Full-platform guide for the completed 10-phase build. Everything runs on
 Python 3.10+ with the standard library plus `requirements.txt`; there is
 no build step and no framework.
 
@@ -203,10 +203,13 @@ python3 demo_connectors.py  # Phase 6: connectors           (54 checks)
 python3 demo_api.py         # Phase 7: external API          (36 checks)
 python3 demo_production.py  # Phase 8: production scale     (72 checks)
 python3 demo_client.py      # Phase 9: client UI            (102 checks)
+python3 demo_safety.py      # Phase 10: safety hardening    (43 checks)
 ```
 
 Exit code 0 + `ALL CHECKS PASSED` = green. `demo_client.py` boots the
-real API and UI servers and exercises the whole client surface over HTTP.
+real API and UI servers and exercises the whole client surface over HTTP;
+`demo_safety.py` additionally asserts the policy regression release gate
+fails loudly against a deliberately permissive policy.
 
 ## 6. Deployment notes
 

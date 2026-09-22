@@ -472,7 +472,18 @@ window and finish connecting in OpenMuse.</p></main></body></html>""")
 
 def serve_ui(api_base: str, host: str = "127.0.0.1", port: int = 0,
              **ctx_kwargs) -> ThreadingHTTPServer:
-    """Start the UI server in a daemon thread; returns the server object."""
+    """Start the UI server in a daemon thread; returns the server object.
+
+    If no memory service is passed, a LayeredMemory store is created under
+    <domains_root>/memory so the stock CLI wires memory automatically.
+    """
+    if "domains_root" not in ctx_kwargs:
+        import tempfile
+        ctx_kwargs["domains_root"] = tempfile.mkdtemp(prefix="openmuse-ui-")
+    if ctx_kwargs.get("memory") is None:
+        from memory.layered import LayeredMemory
+        ctx_kwargs["memory"] = LayeredMemory(
+            os.path.join(ctx_kwargs["domains_root"], "memory"))
     ctx = UiContext(api_base=api_base, **ctx_kwargs)
     handler = type("BoundUiHandler", (UiHandler,), {"ctx": ctx})
     server = ThreadingHTTPServer((host, port), handler)
