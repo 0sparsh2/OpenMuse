@@ -128,3 +128,30 @@ class ConnectorProvider(abc.ABC):
              op: str, args: dict) -> dict:
         """Execute one declared operation under scope and policy enforcement."""
         raise NotImplementedError("connectors arrive in Phase 6")
+
+
+# ---------------------------------------------------------------------------
+# Phase 8 — production scale
+# ---------------------------------------------------------------------------
+class TaskQueue(abc.ABC):
+    """Durable regional work queue.
+
+    Concrete implementation lives in production/ (RegionalQueue). A
+    Kubernetes/SQS-backed implementation plugs in here without changing
+    callers; the interface is message-id idempotent by contract.
+    """
+
+    @abc.abstractmethod
+    def submit(self, item, *, region: str = "") -> tuple[str, bool]:
+        """Submit a work item; return (message_id, is_duplicate). Phase 8."""
+        raise NotImplementedError("production work queues arrive in Phase 8")
+
+    @abc.abstractmethod
+    def claim(self, region: str, worker_id: str):
+        """Claim the oldest queued message in a healthy region. Phase 8."""
+        raise NotImplementedError("production work queues arrive in Phase 8")
+
+    @abc.abstractmethod
+    def ack(self, region: str, message_id: str) -> None:
+        """Mark a message completed. Phase 8."""
+        raise NotImplementedError("production work queues arrive in Phase 8")

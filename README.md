@@ -119,7 +119,49 @@ the next provider in the route.
 
 ## What's next (per blueprint)
 
-- **Phase 8** — production scale, resilience, and multi-surface polish
+- **Phase 9** — Client UI replication
+
+## Phase 8 — production scale, resilience, and multi-surface polish
+
+```
+  production/
+    queue.py          # durable regional queues: idempotent submit (message-id
+                      # dedup), claim/ack/nack, fail_region + drain_region
+                      # failover that never moves completed/dead work
+    workers.py        # worker pool off the API process: exactly-once
+                      # execution, bounded retries, dead-lettering,
+                      # quota backpressure before any execution
+    quotas.py         # per-tenant call/token/spend budgets in sliding
+                      # windows; shed-or-queue backpressure; per-provider
+                      # unit-cost accounting
+    routing.py        # tenant provider ordering over the gateway Router;
+                      # fallbacks only when data policy is compatible
+    channels.py       # ChannelAdapter (mock messaging), signed approval
+                      # deep links consistent across web/mobile/messaging
+    dr.py             # BackupService (checksummed snapshots, RTO/RPO
+                      # restore exercises) + TenantDeletionService
+                      # (delete everywhere, zero-residual audit)
+    adapters.py       # BackupParticipant adapters: database, objects,
+                      # vectors, vault, browser profiles, memory,
+                      # schedules, queue, backups
+    objects.py        # durable tenant-scoped object store ("objects" tier)
+    runlog.py         # durable per-tenant run-record log ("database" tier)
+    loadtest.py       # scripted concurrency/latency targets, pass/fail
+    metrics.py        # per-tenant counters/timings -> observability events
+    namespace.py      # production.* tools (quota_status R1, backup_now R2,
+                      # request_export R2, restore R3, delete_tenant R4
+                      # destructive, channel_send R2)
+  demo_production.py  # 72 checks: queue/workers, idempotent replay,
+                      # regional failover, quotas, routing, channels,
+                      # deep links, deletion audit, backup/restore,
+                      # load test, metrics, tool + policy wiring
+```
+
+Phase 8 exit criteria, as demonstrated: regional failure re-queues in-flight
+work without corrupting run state; queue replay never double-executes;
+restore exercises report RTO/RPO against objectives; tenant deletion
+audits zero residuals across all nine tiers; the load harness reports
+against declared targets.
 
 ## Phase 7 — external API
 

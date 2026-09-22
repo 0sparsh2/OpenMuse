@@ -97,6 +97,11 @@ class MemoryVault(Vault):
     def has(self, credential_ref: str) -> bool:
         return credential_ref in self._secrets
 
+    def refs_for_tenant(self, tenant_id: str) -> list[str]:
+        """Credential refs bound to a tenant (Phase 8: deletion audits)."""
+        return [ref for ref, rec in self._secrets.items()
+                if rec.get("tenant_id") == tenant_id]
+
     def _resolve(self, credential_ref: str, *, tenant_id: str) -> str:
         rec = self._secrets.get(credential_ref)
         if rec is None:

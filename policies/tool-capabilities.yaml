@@ -180,3 +180,29 @@ tools:
     capabilities: [connector.github.write]
     side_effect: external_write
     # Same approval treatment as star.
+  production.quota_status:
+    risk: R1
+    capabilities: [production.read]
+    side_effect: none
+  production.backup_now:
+    risk: R2
+    capabilities: [production.operate]
+    side_effect: local_write
+  production.request_export:
+    risk: R2
+    capabilities: [production.operate]
+    side_effect: local_write
+  production.restore:
+    risk: R3
+    capabilities: [production.operate]
+    side_effect: local_write
+    # Restore overwrites live tenant state from a snapshot.
+  production.delete_tenant:
+    risk: R4
+    capabilities: [production.destroy]
+    side_effect: destructive
+    # Irreversible; requires a bound approval and confirm == tenant_id.
+  production.channel_send:
+    risk: R2
+    capabilities: [messaging.send]
+    side_effect: external_write
