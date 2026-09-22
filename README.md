@@ -1,4 +1,4 @@
-# muse-replica — Phase 3: skills + subagents (on the Phase 1 agent loop + Phase 2 memory)
+# muse-replica — all 9 phases complete: agent loop, memory, subagents, browser, scheduler, connectors, external API, production scale, client UI
 
 A from-scratch reimplementation of the Muse-style personal-agent architecture,
 built from the build blueprint (`../your_files/muse-replica-build-blueprint/`).
@@ -119,7 +119,76 @@ the next provider in the route.
 
 ## What's next (per blueprint)
 
-- **Phase 9** — Client UI replication
+All nine build phases are complete. See [docs/SETUP.md](docs/SETUP.md) for
+full setup/run instructions, and the blueprint's *Deployment blueprint*
+section for the production topology (Docker Compose locally, Kubernetes
+or equivalent in production). Remaining work is operational, not
+architectural: real model provider keys, Postgres + vector extension,
+Redis/durable queue, S3-compatible object store, and the staging
+promotion gates.
+
+## Phase 9 — client UI replication
+
+```
+  client/
+    __init__.py       # package exports
+    api_client.py     # OpenMuseClient: sessions, idempotent sends, SSE +
+                      # Last-Event-ID resume, approval decisions, run
+                      # cancellation, artifact up/download, offline queue,
+                      # read-only cached views
+    sse.py            # SSE parsing + SSEClient with reconnect cursors
+    http.py           # stdlib HTTP helper, HttpError
+    state.py          # ephemeral client state (drafts, cursors, queue,
+                      # cached views) + secret-leak scanner/assertions
+    approvals.py      # ApprovalCard: exact destination/effect/bound
+                      # argument hash; R4/R5 device-auth gating with
+                      # re-display of bound fields after auth
+    services.py       # surface wrappers: ScheduleClient, MemoryClient
+                      # (viewer/editor + forget pipeline), ConnectorClient
+                      # (catalog, OAuth, vault capture — never raw secrets),
+                      # BrowserClient (handoff), UsageClient (quotas/privacy)
+    domains_client.py # GoalsClient / FeedClient / IdeasClient
+    serve_ui.py       # reference client server: static web UI, /v1/*
+                      # reverse proxy to the real API, /v1/local/* domain
+                      # endpoints, server-side Secure Vault capture page
+    web/
+      index.html      # single-page app shell (skip link, ARIA landmarks)
+      css/tokens.css  # original token-based design system (light/dark)
+      css/app.css     # application styles, :focus-visible, responsive
+      js/openmuse-api.js  # JS API layer: idempotency keys, fetch-based
+                      # SSE with resume, approval binding, WebAuthn device
+                      # auth for high-risk approvals, vault-capture flow,
+                      # degraded-mode queue
+      js/ui.js        # views: chat (+side chats), approvals, feed, goals,
+                      # library/artifacts, ideas, memory, schedules/hooks,
+                      # connectors, usage/privacy, voice (Web Speech API)
+  domains/
+    goals.py feed.py ideas.py   # file-backed Goals/Feed/Ideas stores
+  demo_client.py      # 102 checks: client layer against the real backend
+                      # (idempotency, SSE + reconnect, approval binding,
+                      # mutated-argument rejection, device-auth gating,
+                      # artifacts, schedules/hooks, connectors + vault
+                      # capture, memory + forget, goals/feed/ideas,
+                      # browser handoff, usage/export, offline queue,
+                      # no-secret scans, web-UI serving/validity/branding/
+                      # a11y/contrast checks)
+```
+
+Phase 9 exit criteria, as demonstrated: every backend capability from
+Phases 1–8 is reachable from the client; approval cards display exact
+destination, effect, and the bound argument hash, and any mutation of the
+arguments invalidates the approval (409); high-risk (R4/R5) approvals
+require device authentication and re-display the bound fields afterwards;
+no secret, token, or credential material appears in client state, storage,
+or logs (asserted by scanner); keyboard navigation, screen-reader labels,
+and ≥ 4.5:1 text contrast pass on the primary screens; the client ships
+zero Meta trademarks, logos, or proprietary assets — original "OpenMuse"
+wordmark and iconography only.
+
+Note: the reference web client is a zero-dependency static app (same
+project convention as the backend: stdlib only, no build step) rather
+than React+TypeScript; it implements the same API-layer contracts, so a
+React/TS port can drop in over `js/openmuse-api.js` unchanged.
 
 ## Phase 8 — production scale, resilience, and multi-surface polish
 
