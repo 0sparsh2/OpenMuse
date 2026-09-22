@@ -99,3 +99,47 @@ tools:
     risk: R1
     capabilities: [browser.session]
     side_effect: none
+  scheduler.create:
+    risk: R2
+    capabilities: [scheduler.manage]
+    side_effect: local_write
+    # Creating a recurring schedule records the user's approval_scope naming
+    # the schedule; one-shot schedules authorize exactly one run.
+  scheduler.list:
+    risk: R0
+    capabilities: [scheduler.read]
+    side_effect: none
+  scheduler.get:
+    risk: R0
+    capabilities: [scheduler.read]
+    side_effect: none
+  scheduler.update:
+    risk: R2
+    capabilities: [scheduler.manage]
+    side_effect: local_write
+    # Edits bump the schedule version; fired instances keep snapshots.
+  scheduler.remove:
+    risk: R2
+    capabilities: [scheduler.manage]
+    side_effect: local_write
+  scheduler.run_now:
+    risk: R2
+    capabilities: [scheduler.manage]
+    side_effect: local_write
+  scheduler.enable:
+    risk: R2
+    capabilities: [scheduler.manage]
+    side_effect: local_write
+  scheduler.disable:
+    risk: R2
+    capabilities: [scheduler.manage]
+    side_effect: local_write
+    # Disabling prevents future enqueues immediately.
+  scheduler.hook_create:
+    risk: R2
+    capabilities: [scheduler.manage]
+    side_effect: local_write
+  scheduler.hook_list:
+    risk: R0
+    capabilities: [scheduler.read]
+    side_effect: none

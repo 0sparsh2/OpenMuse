@@ -118,8 +118,48 @@ the next provider in the route.
 
 ## What's next (per blueprint)
 
-- **Phase 4** — browser computer use (`agent/seams.py::BrowserOperator`)
-- **Phase 5** — crons + hooks (`agent/seams.py::Scheduler`)
+- **Phase 6** — connectors and secure credential use (`agent/seams.py`)
+
+## Phase 5 — scheduler, hooks, and proactive delivery
+
+```
+  scheduler/
+    service.py        # ScheduleService: cron/one-shot schedules, versioned
+                      # edits, misfire policies (skip/fire_once/catch_up),
+                      # dedup keys, run_now, enable/disable, tick loop
+    cron_expr.py      # pure-Python 5-field cron; timezone-aware next-fire with
+                      # DST handling (spring-forward gaps skipped, fall-back
+                      # ambiguous times fire once)
+    hooks.py          # hook ingress: replay window, HMAC signature, event-ID
+                      # dedup, payload filters; payloads are untrusted data
+    delivery.py       # delivery critic: NOTIFY_NOW / ADD_TO_FEED /
+                      # HOLD_UNTIL_QUIET_HOURS_END / SILENT_LOG with
+                      # deterministic rules before the model (critical alerts
+                      # can't be silenced; caps/quiet hours can't be overridden)
+    runner.py         # bounded run executor: capability-ceiling intersection,
+                      # same R0–R5 policy engine; ASK while the user is away
+                      # fails closed (UNATTENDED_FAIL_CLOSED) and defers the
+                      # approval; durable RunRecord history
+    store.py          # file-backed durable state: schedules, instances, hooks,
+                      # run history, event dedup, notification caps
+    namespace.py      # scheduler.* tools: create (R2), list/get (R0),
+                      # update/remove/run_now/enable/disable (R2),
+                      # hook_create (R2), hook_list (R0)
+  prompts/scheduler.md, prompts/delivery-critic.md
+```
+
+A yes to a one-time task authorizes exactly one run: one-shot schedules
+fire once and auto-disable; a second execution without a new approval is
+refused. Recurring schedules carry the user's approval text naming the
+schedule; every instance snapshots the instruction, ceiling, and approval
+scope at creation, and edits bump the version without mutating fired
+instances.
+
+Run `python3 demo_scheduler.py` (49/49 checks): DST previews, one-shot
+single-fire, recurring cadence + removal, misfire policies, dedup, edit
+versioning, disable, hook verification/dedup/replay, ceiling denial,
+unattended fail-closed approvals, the delivery matrix, and all
+`scheduler.*` tools through the registry.
 
 ## Phase 3 — skills and subagents
 
