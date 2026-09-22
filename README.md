@@ -119,7 +119,45 @@ the next provider in the route.
 
 ## What's next (per blueprint)
 
-- **Phase 7** — safety hardening and adversarial readiness
+- **Phase 8** — production scale, resilience, and multi-surface polish
+
+## Phase 7 — external API
+
+```
+  api/
+    server.py         # stdlib HTTP server: versioned /v1 routes, bearer
+                      # API-key auth + scopes, per-key rate limiting,
+                      # idempotency-key replay, SSE event streams with
+                      # Last-Event-ID reconnect, machine-readable errors,
+                      # per-request audit log
+    backend.py        # service layer over the platform: sessions, message
+                      # submission driving real turns in background threads,
+                      # approval decisions (argument-hash bound), run cancel,
+                      # artifact store; honors RunStore idempotency, the
+                      # deterministic policy engine, and ManualDecider parks
+    auth.py           # scoped API keys (omk_...); only hashes stored
+    ratelimit.py      # per-key token buckets -> 429 + Retry-After
+    idempotency.py    # same key + same fingerprint replays; same key +
+                      # different body -> IDEMPOTENCY_KEY_REUSED
+    eventbus.py       # per-run sequenced SSE events; reconnect replays
+                      # only missed events
+    webhooks.py       # run.completed/run.failed subscriptions, HMAC-signed
+                      # deliveries, injectable transport
+    openapi.py        # generated OpenAPI 3.0 doc incl. versioning and
+                      # deprecation policy
+    errors.py         # stable machine-readable error codes
+  prompts/api-surface.md
+```
+
+Endpoints follow the blueprint's external API contracts:
+`POST /v1/sessions`, `POST /v1/chats/{chat_id}/messages` (idempotent),
+`GET /v1/runs/{run_id}/events` (SSE), `POST
+/v1/approvals/{approval_id}/decision` (exact argument_hash required),
+`POST /v1/runs/{run_id}/cancel`, artifact upload/download, webhooks, and
+`/openapi.json`. Run `python3 demo_api.py` (36/36 checks): auth/scope
+rejections, session + message + SSE approval flow, reconnect replay without
+duplicates, idempotent retry, tamper-proof approval decision, artifact
+round-trip, signed webhook delivery, 429 rate limiting, and cancel.
 
 ## Phase 6 — connectors and secure credential use
 
