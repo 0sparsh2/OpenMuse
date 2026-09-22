@@ -119,13 +119,59 @@ the next provider in the route.
 
 ## What's next (per blueprint)
 
-All nine build phases are complete. See [docs/SETUP.md](docs/SETUP.md) for
+All ten build phases are complete (the blueprint's titled Phase 7, safety
+hardening, was slotted in as Phase 10 after Phase 9). See [docs/SETUP.md](docs/SETUP.md) for
 full setup/run instructions, and the blueprint's *Deployment blueprint*
 section for the production topology (Docker Compose locally, Kubernetes
 or equivalent in production). Remaining work is operational, not
 architectural: real model provider keys, Postgres + vector extension,
 Redis/durable queue, S3-compatible object store, and the staging
 promotion gates.
+
+## Phase 10 — safety hardening and adversarial readiness
+
+```
+  safety/
+    __init__.py        # package exports
+    risk_catalog.py    # full R0–R5 catalog accessor; verifies every tool
+                       # in tool-capabilities.yaml maps to a documented class
+    taint.py           # source-to-sink taint tracking: web/email/pdf/child
+                       # output tainted at ingestion; tainted data at a
+                       # sensitive sink needs explicit user clearance
+    injection.py       # deterministic prompt-injection classifier
+                       # (block/suspect/none) + deterministic destination
+                       # checks (origin/recipient/path vs authorized intent)
+    strong_auth.py     # second-factor attestation for R4 approvals:
+                       # challenge -> out-of-band completion -> single-use,
+                       # request-bound verification; guarded_resolve refuses
+                       # grants without attestation
+    secret_scan.py     # canary + secret-shape scanners gating persistence
+                       # and egress of seeded credentials
+    redteam.py         # red-team corpus runner + release gate: any fixture
+                       # whose outcome differs from pinned expectation raises
+                       # ReleaseBlocked
+    support.py         # scoped, time-boxed, audited support grants;
+                       # privacy-preserving diagnostics (counts/hashes/codes,
+                       # never raw user data); run quarantine
+    runbooks.md        # RB-1..RB-5 incident runbooks
+    fixtures/
+      redteam_corpus.yaml  # 14 attack/control fixtures
+  demo_safety.py       # 43 checks proving the exit criteria
+  policy/engine.py     # extended (additively): injection block, destination
+                       # mismatch, strong-auth, taint clearance, and suspect-
+                       # review rules ahead of the bound-approval rule
+  policies/risk-catalog.yaml  # full catalog: description, examples,
+                              # treatment, and approval per class
+```
+
+Phase 10 exit criteria, as demonstrated: injection fixtures across web,
+email, PDF, and child output cannot create unauthorized effects
+(INJECTION_BLOCKED); argument mutation invalidates the approval; a
+cross-origin browser redirect triggers re-evaluation (CROSS_ORIGIN_REDIRECT);
+secret scanners block persistence and egress of seeded credentials; the
+red-team regression gate passes on the hardened pipeline and fails loudly
+against a deliberately permissive policy — authorization regressions block
+release. All Phase 1–9 demos remain green.
 
 ## Phase 9 — client UI replication
 

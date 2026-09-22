@@ -3,14 +3,16 @@ Deterministic policy engine — the final authorization authority.
 
 Precedence (fixed, from the blueprint):
   1. Explicit DENY (R5, destructive guard, unknown mapping).
+  1b. Safety hardening (Phase 10): block-severity injection -> DENY;
+      destination mismatch -> DENY; R4 without strong-auth attestation -> ASK;
+      tainted data at a sensitive sink without clearance -> ASK (R4+: DENY);
+      suspect-severity injection without human review -> ASK.
   2. Valid bound approval -> ALLOW.
   3. Narrow ALLOW for low-risk reads (R0, side_effect == none).
   4. Otherwise ASK (R1/R2, external writes) — or DENY when no rule matches.
 
-The risk classifier (a model) may RAISE risk, never lower it. Phase 1 has no
-classifier; risk comes from policies/tool-capabilities.yaml, which is the
-deterministic baseline. Deterministic policy — not the LLM — is the final
-authority.
+The risk classifier (deterministic rules in safety/) may RAISE risk, never
+lower it. Deterministic policy — not the LLM — is the final authority.
 """
 from __future__ import annotations
 
@@ -25,6 +27,11 @@ DENY = "DENY"
 
 _RISK_ORDER = ["R0", "R1", "R2", "R3", "R4", "R5"]
 
+# Injection severity levels produced by safety.injection.
+INJ_NONE = "none"
+INJ_SUSPECT = "suspect"
+INJ_BLOCK = "block"
+
 
 @dataclass
 class PolicyInput:
@@ -37,6 +44,21 @@ class PolicyInput:
     # human-readable summary for approval cards (secret values already redacted upstream)
     argument_summary: dict = field(default_factory=dict)
     has_valid_approval: bool = False
+    # --- Phase 10 safety fields (all defaulted: existing callers unaffected) ---
+    # Prompt-injection screening of the untrusted content behind this call.
+    injection_severity: str = INJ_NONE
+    injection_rules: tuple = ()
+    injection_reviewed: bool = False  # human reviewed a suspect finding
+    # Deterministic destination check (origin / recipient / path vs intent).
+    destination_ok: bool = True
+    destination_reason: str = ""      # e.g. CROSS_ORIGIN_REDIRECT
+    destination_detail: str = ""
+    # Source-to-sink taint: tainted data reaching a sensitive sink.
+    tainted_sink: str = ""            # e.g. "external_send"; "" = no tainted sink
+    taint_cleared: bool = False       # user explicitly re-authorized the taint
+    # Strong authentication for financial/security (R4) actions.
+    requires_strong_auth: bool = False
+    strong_auth_attested: bool = False
 
 
 @dataclass
@@ -75,6 +97,50 @@ class PolicyEngine:
         if inp.risk == "R5":
             return PolicyDecision(DENY, "PROHIBITED_RISK_CLASS",
                                   f"{inp.tool_name} is in a prohibited risk class and cannot run.")
+
+        # 1b. Safety hardening: these hold regardless of approvals, because an
+        # approval binds arguments — it cannot sanitize an attack payload,
+        # re-authorize a changed destination, or substitute for a second factor.
+        if inp.injection_severity == INJ_BLOCK:
+            rules = ", ".join(inp.injection_rules) or "unspecified"
+            return PolicyDecision(
+                DENY, "INJECTION_BLOCKED",
+                f"Blocked: untrusted content behind {inp.tool_name} matches "
+                f"prompt-injection rules ({rules}). No approval can authorize this; "
+                "the content must be removed or the task reframed.")
+
+        if not inp.destination_ok:
+            return PolicyDecision(
+                DENY, inp.destination_reason or "DESTINATION_MISMATCH",
+                f"Blocked: {inp.destination_detail or 'destination is outside the authorized intent'}. "
+                "Re-authorize the new destination to continue.")
+
+        if inp.requires_strong_auth and not inp.strong_auth_attested:
+            return PolicyDecision(
+                ASK, "STRONG_AUTH_REQUIRED",
+                f"{inp.tool_name} is a financial/security action and needs a "
+                "second-factor attestation before it can run.",
+                approval_template="strong_auth_v1")
+
+        if inp.tainted_sink and not inp.taint_cleared:
+            if inp.risk in ("R4", "R5"):
+                return PolicyDecision(
+                    DENY, "TAINTED_SINK_BLOCKED",
+                    f"Blocked: tainted data would reach the {inp.tainted_sink} sink "
+                    f"of {inp.tool_name}. The user must explicitly clear the taint first.")
+            return PolicyDecision(
+                ASK, "TAINT_CLEARANCE_REQUIRED",
+                f"Tainted data would reach the {inp.tainted_sink} sink of "
+                f"{inp.tool_name}. The user must explicitly re-authorize it.",
+                approval_template="taint_clearance_v1")
+
+        if inp.injection_severity == INJ_SUSPECT and not inp.injection_reviewed:
+            return PolicyDecision(
+                ASK, "INJECTION_REVIEW_REQUIRED",
+                f"Untrusted content behind {inp.tool_name} looks suspicious "
+                f"({', '.join(inp.injection_rules) or 'heuristic match'}). "
+                "A human must review it before this call runs.",
+                approval_template="injection_review_v1")
 
         # 2. Valid bound approval authorizes the exact proposed call.
         if inp.has_valid_approval:

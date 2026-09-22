@@ -1,15 +1,68 @@
 # Risk catalog — policies/risk-catalog.yaml
-# Mirrors the blueprint's R0-R5 classes. The classifier may raise risk, never lower it.
+# The full R0-R5 risk catalog. The classifier may raise risk, never lower it.
+# Each class documents: what it covers, concrete examples, and the
+# deterministic policy treatment. safety/risk_catalog.py loads this file and
+# verifies every tool in tool-capabilities.yaml maps to a known class.
 risk_classes:
   R0:
     description: "Read-only, low sensitivity: public web read, local metadata read."
+    examples:
+      - "system.clock, math.calc — pure computation, no data access"
+      - "web.fetch of a public URL — no credentials, no private data"
+      - "browser.observe — reading the accessibility tree of the current page"
+      - "connector.github.get_repo — public repository metadata"
+      - "scheduler.list / hook_list — reading own job definitions"
+    treatment: "ALLOW without approval when side_effect == none. Reading tainted sources is safe; their outputs are taint-labeled at the source."
+    approval: none
   R1:
     description: "Private read: email, calendar, personal files, financial balances."
+    examples:
+      - "memory.recall — reading the user's own stored memories"
+      - "files.read of a personal document"
+      - "subagent.status — reading child-agent state"
+    treatment: "ASK — needs an explicit grant (private_read_v1 template) unless a valid bound approval exists."
+    approval: "explicit grant (may be pre-approved per session at the client's discretion)"
   R2:
     description: "Reversible local write: create draft, write workspace file, update local note."
+    examples:
+      - "files.write inside the workspace"
+      - "memory.note / memory.forget (tombstone default)"
+      - "browser.act — click/type on the current page (non-consequential)"
+      - "subagent.spawn — bounded child with carved budget"
+      - "scheduler.create — a new cron job (runs are still policy-gated)"
+    treatment: "ASK — needs an explicit bound grant (local_write_v1 template). Argument mutation invalidates the grant. Tainted arguments targeting a sensitive sink escalate (see safety/taint.py)."
+    approval: "bound approval (single-use, argument-hash bound)"
   R3:
     description: "External communication: send email/message, publish, invite."
+    examples:
+      - "connector.github.star / unstar — public external write"
+      - "production.channel_send — message to a messaging surface"
+      - "scheduler.hook_create — registers an externally reachable hook"
+    treatment: "DENY unless a valid bound approval exists. Tainted content reaching an R3 sink requires explicit taint clearance in the approval's bind fields. Destination checks apply (recipient/origin must match authorized intent)."
+    approval: "bound approval + destination check (+ taint clearance when tainted)"
   R4:
     description: "Financial/legal/security: purchase, transfer, sign, change credentials, account recovery."
+    examples:
+      - "browser.act kind=confirm_commit — the commit barrier proposal"
+      - "connector.github.star is R3; a hypothetical payments.charge would be R4"
+      - "vault credential rotation, account recovery flows"
+    treatment: "DENY unless a valid bound approval exists AND strong authentication is attested for the request (safety/strong_auth.py). Tainted R4 sinks are blocked even with approval unless taint was explicitly cleared by the user."
+    approval: "bound approval + strong-auth attestation (+ taint clearance when tainted)"
   R5:
     description: "Destructive or prohibited: permanent deletion without recovery, privilege escalation, policy bypass, unsafe destinations."
+    examples:
+      - "Unmapped tools (fail closed)"
+      - "shell.exec with destructive patterns (rm -rf /, fork bombs) — denied by the deterministic command guard"
+      - "browser action kinds outside the closed union (evasion primitives)"
+      - "Any attempt to disable, bypass, or reconfigure policy itself"
+    treatment: "DENY always. No approval can authorize R5. Attempts are logged as policy-violation incidents (see safety/runbooks.md RB-1)."
+    approval: "never — not authorizable"
+
+# Escalation rules applied by the safety pipeline (deterministic).
+escalation:
+  # The risk classifier (deterministic rules in safety/) may raise risk, never lower it.
+  classifier_may_raise: true
+  classifier_may_lower: false
+  injection_block: "any block-severity injection finding forces DENY regardless of approvals"
+  tainted_sink: "tainted data reaching an R3+ sink requires explicit taint clearance; R4+ tainted sinks are blocked without user clearance"
+  destination_mismatch: "destination outside authorized intent forces DENY + re-evaluation"
