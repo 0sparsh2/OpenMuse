@@ -87,6 +87,15 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         ("GET", r"^/v1/notifications/stream$", "notifications_stream", "sessions:read", False),
         ("POST", r"^/v1/notifications/read-all$", "notifications_read_all", "sessions:read", False),
         ("POST", r"^/v1/notifications/(?P<nid>[^/]+)/read$", "notification_read", "sessions:read", False),
+        ("GET", r"^/v1/goals$", "goals_list", "sessions:read", False),
+        ("POST", r"^/v1/goals$", "goals_create", "sessions:write", False),
+        ("PATCH", r"^/v1/goals/(?P<gid>goal_[a-f0-9]+)$", "goals_update", "sessions:write", False),
+        ("GET", r"^/v1/ideas$", "ideas_list", "sessions:read", False),
+        ("POST", r"^/v1/ideas$", "ideas_add", "sessions:write", False),
+        ("POST", r"^/v1/ideas/generate$", "ideas_generate", "sessions:write", False),
+        ("POST", r"^/v1/ideas/(?P<iid>idea_[a-f0-9]+)/(?P<act>accept|dismiss|snooze)$", "ideas_act", "sessions:write", False),
+        ("GET", r"^/v1/feed$", "feed_list", "sessions:read", False),
+        ("POST", r"^/v1/feed/(?P<fid>feed_[a-f0-9]+)/dismiss$", "feed_dismiss", "sessions:write", False),
         ("GET", r"^/v1/library$", "library_list", "artifacts:read", False),
         ("POST", r"^/v1/library$", "library_upload", "artifacts:write", False),
         ("GET", r"^/v1/library/(?P<aid>art_[a-f0-9]+)$", "library_download", "artifacts:read", False),
@@ -602,6 +611,70 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         finally:
             self.backend._note_listeners.remove(listener)
         return None
+
+    # -- goals / ideas / feed (issue #12) -------------------------------------------
+    def _pro(self):
+        if self.backend.proactive is None:
+            raise _NotFound("goals")
+        return self.backend.proactive
+
+    def h_goals_list(self, params):
+        return 200, {"goals": self._pro().goals(self._uid(), include_archived=True)}, None
+
+    def h_goals_create(self, params):
+        b = self._parse_json()
+        g = self._pro().create_goal(self._uid(), title=str(b.get("title", "")), description=str(b.get("description", "")),
+                                    target_date=str(b.get("target_date", "")), milestones=b.get("milestones") or [])
+        return 201, {"goal": g}, None
+
+    def h_goals_update(self, params):
+        b = self._parse_json()
+        try:
+            g = self._pro().update_goal(self._uid(), params["gid"], status=str(b.get("status", "")),
+                                        add_milestone=str(b.get("add_milestone", "")),
+                                        complete_milestone=str(b.get("complete_milestone", "")),
+                                        note=str(b.get("note", "")))
+        except KeyError:
+            raise _NotFound("goal")
+        return 200, {"goal": g}, None
+
+    def h_ideas_list(self, params):
+        from urllib.parse import parse_qs, urlparse
+        status = (parse_qs(urlparse(self.path).query).get("status") or ["open"])[0]
+        return 200, {"ideas": self._pro().ideas(self._uid(), status=status)}, None
+
+    def h_ideas_add(self, params):
+        b = self._parse_json()
+        idea = self._pro().propose(self._uid(), title=str(b.get("title", "")), rationale=str(b.get("rationale", "")),
+                                   action_prompt=str(b.get("action_prompt", "")), source="user")
+        if idea is None:
+            raise ValueError("that idea is already on your list")
+        return 201, {"idea": idea}, None
+
+    def h_ideas_generate(self, params):
+        return 200, {"ideas": self._pro().generate(self._uid(), notify=False)}, None
+
+    def h_ideas_act(self, params):
+        b = self._parse_json()
+        pro, uid, iid = self._pro(), self._uid(), params["iid"]
+        try:
+            if params["act"] == "accept":
+                return 201, pro.accept(uid, iid), None
+            if params["act"] == "dismiss":
+                return 200, {"idea": pro.dismiss(uid, iid, str(b.get("reason", "")))}, None
+            return 200, {"idea": pro.snooze(uid, iid, int(b.get("days", 1) or 1))}, None
+        except KeyError:
+            raise _NotFound("idea")
+
+    def h_feed_list(self, params):
+        return 200, {"items": self._pro().feed(self._uid())}, None
+
+    def h_feed_dismiss(self, params):
+        try:
+            self._pro().dismiss_feed(self._uid(), params["fid"])
+        except KeyError:
+            raise _NotFound("feed item")
+        return 200, {"dismissed": params["fid"]}, None
 
     # -- library (issue #14) --------------------------------------------------------
     def _lib(self):

@@ -36,6 +36,26 @@ tools:
     risk: R2
     capabilities: [docs.write]
     side_effect: local_write
+  goals.create:
+    risk: R2
+    capabilities: [goals.write]
+    side_effect: local_write
+  goals.update:
+    risk: R2
+    capabilities: [goals.write]
+    side_effect: local_write
+  goals.list:
+    risk: R0
+    capabilities: [goals.read]
+    side_effect: none
+  goals.propose_idea:
+    risk: R2
+    capabilities: [ideas.write]
+    side_effect: local_write
+  goals.post_update:
+    risk: R2
+    capabilities: [feed.write]
+    side_effect: local_write
   task.plan:
     risk: R0
     capabilities: [task.plan]

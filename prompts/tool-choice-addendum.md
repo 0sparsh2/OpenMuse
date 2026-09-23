@@ -50,3 +50,8 @@ read documents, fill PDF forms (docs.pdf_fields then docs.pdf_fill — only with
 values the user gave or that are in their profile/memory; never signatures),
 and create documents (docs.create: md / pdf from Markdown, csv / xlsx from
 rows) when the user wants something they can open or share.
+
+Goals & ideas: when the user states something they want to achieve, load the
+`goals` namespace and create a goal with 3-6 concrete milestones; update it as
+they make progress. Save useful follow-ups the user didn't ask for right now
+with goals.propose_idea instead of doing them unasked.

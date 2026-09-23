@@ -88,6 +88,8 @@ class ApiBackend:
         monitors_llm=None,
         enable_monitors: bool = False,
         library_root: str | None = None,
+        enable_proactive: bool = False,
+        proactive_llm=None,
     ):
         self.tenant_id = tenant_id
         self.workspace_root = workspace_root
@@ -188,6 +190,14 @@ class ApiBackend:
             from .library import Library, register_tools as register_doc_tools
             self.library = Library(self, library_root)
             register_doc_tools(self.registry, self.library)
+
+        # Goals / Ideas / Feed (issue #12): per user, agent-managed, idea generator.
+        self.proactive = None
+        if enable_proactive:
+            from .proactive import Proactive, register_tools as register_goal_tools
+            self.proactive = Proactive(self, llm=proactive_llm)
+            register_goal_tools(self.registry, self.proactive)
+            self.default_namespaces = set(self.default_namespaces) | {"goals"}
 
         # Monitors & alerts (issue #11): price / text / change watches.
         self.monitors = None
@@ -703,6 +713,7 @@ class ApiBackend:
                         s["note"] = p.get("note", "")
                 self.eventbus.publish(run_id, "task.step", p)
             elif t == "task.input_required":
+                self._plans.setdefault(run_id, {"steps": []})["asked"] = True
                 self.eventbus.publish(run_id, "task.input_required", p)
             elif t == "run.paused":
                 self.eventbus.publish(run_id, "run.paused", {"run_id": run_id})
@@ -750,7 +761,7 @@ class ApiBackend:
                 })
             elif t == "run.completed":
                 plan = self._plans.get(run_id)
-                if plan and plan.get("steps") and not plan.get("updated"):
+                if plan and plan.get("steps") and not plan.get("updated") and not plan.get("asked"):
                     # The model finished without ticking its own checklist: a
                     # completed run delivered the plan, so close it out visibly.
                     for s in plan["steps"]:

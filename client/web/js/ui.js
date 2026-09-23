@@ -647,6 +647,11 @@
         "files.list": ["Looking at your files", "Looked at your files"],
         "web.fetch": ["Reading " + hostOf(a.url || ""), "Read " + hostOf(a.url || "")],
         "monitor.create": ["Setting up a watch on " + hostOf(a.url || ""), "Watching " + hostOf(a.url || "")],
+        "goals.create": ["Planning your goal", "Planned your goal"],
+        "goals.update": ["Updating your goal", "Updated your goal"],
+        "goals.list": ["Checking your goals", "Checked your goals"],
+        "goals.propose_idea": ["Saving an idea", "Saved an idea for later"],
+        "goals.post_update": ["Posting to your feed", "Posted to your feed"],
         "monitor.list": ["Checking your monitors", "Checked your monitors"],
         "monitor.remove": ["Removing a monitor", "Removed a monitor"],
         "shell.exec": ["Running a command", "Ran a command"],
@@ -701,6 +706,18 @@
         });
         if (d.more) ul.appendChild(el("li", { class: "mc-agenda-more", text: "+" + d.more + " more" }));
         card.appendChild(ul);
+      } else if (d.type === "goal") {
+        ic.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/></svg>';
+        meta.appendChild(el("div", { class: "mc-tool-t", text: d.title || "Goal" }));
+        meta.appendChild(el("div", { class: "mc-tool-s", text: (d.milestones || []).length + " milestones" }));
+        if ((d.milestones || []).length) {
+          const ol = el("ol", { class: "mc-goal-ms" });
+          d.milestones.forEach((t) => ol.appendChild(el("li", { text: t })));
+          card.appendChild(ol);
+        }
+        const b = el("button", { type: "button", class: "mc-open", text: "See goals" });
+        b.addEventListener("click", () => showTab("goals"));
+        card.appendChild(b);
       } else if (d.type === "monitor") {
         ic.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
         meta.appendChild(el("div", { class: "mc-tool-t", text: d.title || "Monitor" }));
@@ -1288,103 +1305,10 @@
   }
 
   /* -- feed view -------------------------------------------------------------- */
-  function feedView(root) {
-    root.innerHTML = "";
-    root.appendChild(el("h1", { text: "Feed" }));
-    const list = el("div", {});
-    root.appendChild(list);
-    async function refresh() {
-      list.innerHTML = "";
-      let items = [];
-      try { items = await API.local("GET", "/feed"); } catch (e) { /* degraded */ }
-      if (!items.length) { list.appendChild(el("div", { class: "empty", text: "No feed items yet." })); return; }
-      items.forEach((it) => {
-        const c = el("div", { class: "card" });
-        c.appendChild(el("h3", { text: it.title }));
-        if (it.body) { const p = el("p", { class: "muted" }); p.textContent = it.body; c.appendChild(p); }
-        const meta = el("div", { class: "muted", text: "from " + (it.source_type || "?") + " · " +
-          new Date(it.created_at * 1000).toLocaleString() });
-        c.appendChild(meta);
-        const row = el("div", { class: "form-row" });
-        const mk = (label, fn, cls) => {
-          const b = el("button", { class: "btn small " + (cls || "secondary"), type: "button", text: label });
-          b.addEventListener("click", async () => { await fn(); refresh(); });
-          row.appendChild(b);
-        };
-        if (it.run_id) mk("View run", async () => { showTab("chat"); toast("Run " + it.run_id); });
-        mk("Mute source", async () => API.local("POST", "/feed/mute", { source_id: it.source_id }));
-        mk("Dismiss", async () => API.local("POST", "/feed/" + it.id + "/dismiss", {}));
-        c.appendChild(row);
-        list.appendChild(c);
-      });
-    }
-    root._refresh = refresh; refresh();
-  }
+
 
   /* -- goals view --------------------------------------------------------------- */
-  function goalsView(root) {
-    root.innerHTML = "";
-    root.appendChild(el("h1", { text: "Goals" }));
-    const form = el("form", { class: "card" });
-    form.innerHTML = '<h3>New goal</h3>';
-    const title = el("input", { type: "text", "aria-label": "Goal title", placeholder: "Goal title" });
-    const desc = el("textarea", { "aria-label": "Goal description", placeholder: "Description", rows: "2" });
-    const add = el("button", { class: "btn", type: "submit", text: "Add goal" });
-    form.appendChild(title); form.appendChild(desc);
-    form.appendChild(el("div", {}, [add]));
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      if (!title.value.trim()) return;
-      await API.local("POST", "/goals", { title: title.value.trim(), description: desc.value });
-      title.value = ""; desc.value = ""; refresh();
-    });
-    root.appendChild(form);
-    const list = el("div", {});
-    root.appendChild(list);
-    async function refresh() {
-      list.innerHTML = "";
-      let goals = [];
-      try { goals = await API.local("GET", "/goals"); } catch (e) {}
-      if (!goals.length) { list.appendChild(el("div", { class: "empty", text: "No goals yet." })); return; }
-      goals.forEach((g) => {
-        const c = el("div", { class: "card" });
-        const head = el("div", { class: "list-item" });
-        const t = el("div", {});
-        t.appendChild(el("strong", { text: g.title }));
-        t.appendChild(el("div", { class: "muted", text: (g.activity || []).length + " activities · " +
-          (g.attachments || []).length + " attachments" }));
-        const badge = el("span", { class: "badge" + (g.status === "active" ? " ok" : ""), text: g.status });
-        head.appendChild(t); head.appendChild(badge);
-        c.appendChild(head);
-        if (g.description) { const p = el("p", {}); p.textContent = g.description; c.appendChild(p); }
-        const row = el("div", { class: "form-row" });
-        const act = el("input", { type: "text", "aria-label": "Log activity for " + g.title, placeholder: "Log activity…" });
-        const logBtn = el("button", { class: "btn small secondary", type: "button", text: "Log" });
-        logBtn.addEventListener("click", async () => {
-          if (!act.value.trim()) return;
-          await API.local("POST", "/goals/" + g.id + "/activity", { text: act.value.trim() });
-          refresh();
-        });
-        const done = el("button", { class: "btn small secondary", type: "button",
-                                   text: g.status === "completed" ? "Reopen" : "Complete" });
-        done.addEventListener("click", async () => {
-          await API.local("POST", "/goals/" + g.id + "/status",
-                          { status: g.status === "completed" ? "active" : "completed" });
-          refresh();
-        });
-        const del = el("button", { class: "btn small danger", type: "button", text: "Delete" });
-        del.addEventListener("click", async () => {
-          if (confirm("Delete goal \"" + g.title + "\"?")) {
-            await API.local("DELETE", "/goals/" + g.id); refresh();
-          }
-        });
-        row.appendChild(act); row.appendChild(logBtn); row.appendChild(done); row.appendChild(del);
-        c.appendChild(row);
-        list.appendChild(c);
-      });
-    }
-    root._refresh = refresh; refresh();
-  }
+
 
   /* -- library view --------------------------------------------------------------- */
   /* -- library (issue #14): the signed-in user's documents -------------------- */
@@ -1520,50 +1444,7 @@
 
 
   /* -- ideas view ------------------------------------------------------------------- */
-  function ideasView(root) {
-    root.innerHTML = "";
-    root.appendChild(el("h1", { text: "Ideas" }));
-    const form = el("form", { class: "card" });
-    const input = el("input", { type: "text", "aria-label": "Capture an idea", placeholder: "Capture an idea…" });
-    const add = el("button", { class: "btn", type: "submit", text: "Capture" });
-    const row = el("div", { class: "form-row" });
-    row.appendChild(input); row.appendChild(add);
-    form.appendChild(row);
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      if (!input.value.trim()) return;
-      await API.local("POST", "/ideas", { text: input.value.trim() });
-      input.value = ""; refresh();
-    });
-    root.appendChild(form);
-    const list = el("div", {});
-    root.appendChild(list);
-    async function refresh() {
-      list.innerHTML = "";
-      let ideas = [];
-      try { ideas = await API.local("GET", "/ideas"); } catch (e) {}
-      if (!ideas.length) { list.appendChild(el("div", { class: "empty", text: "No ideas yet." })); return; }
-      ideas.forEach((idea) => {
-        const c = el("div", { class: "card" });
-        const p = el("p", {}); p.textContent = idea.text; c.appendChild(p);
-        c.appendChild(el("span", { class: "badge", text: idea.status }));
-        const row2 = el("div", { class: "form-row" });
-        const prom = el("button", { class: "btn small secondary", type: "button", text: "Promote to goal" });
-        prom.addEventListener("click", async () => {
-          await API.local("POST", "/ideas/" + idea.id + "/promote", {});
-          toast("Promoted to a goal."); refresh();
-        });
-        const arch = el("button", { class: "btn small secondary", type: "button", text: "Archive" });
-        arch.addEventListener("click", async () => {
-          await API.local("POST", "/ideas/" + idea.id + "/archive", {}); refresh();
-        });
-        row2.appendChild(prom); row2.appendChild(arch);
-        c.appendChild(row2);
-        list.appendChild(c);
-      });
-    }
-    root._refresh = refresh; refresh();
-  }
+
 
   /* -- memory view ------------------------------------------------------------------ */
   /* -- accounts: sign in / sign up gate ----------------------------------- */
@@ -2018,6 +1899,192 @@
     root._refresh = refresh; refresh();
   }
 
+  /* -- ideas / goals / feed (issue #12): the signed-in user's own ---------- */
+  const errMsg = (e) => (e.body && e.body.error && e.body.error.message) || e.message;
+
+  function ideasView(root) {
+    root.innerHTML = "";
+    root.classList.add("memv");
+    root.appendChild(el("div", { class: "memv-head", html: "<h1>Ideas</h1><p class='muted'>Suggestions OpenMuse noticed from what it knows about you — each shows why. Nothing happens until you say “Do it”.</p>" }));
+    const bar = el("div", { class: "idea-bar" });
+    const gen = el("button", { type: "button", class: "btn", text: "Suggest ideas now" });
+    const add = el("input", { type: "text", placeholder: "…or jot down your own idea", "aria-label": "Add an idea" });
+    const addBtn = el("button", { type: "button", class: "btn secondary", text: "Add" });
+    bar.appendChild(gen); bar.appendChild(add); bar.appendChild(addBtn);
+    root.appendChild(bar);
+    const list = el("div", {});
+    root.appendChild(list);
+    gen.addEventListener("click", async () => {
+      gen.disabled = true; gen.textContent = "Thinking…";
+      try {
+        const r = await API.req("POST", "/v1/ideas/generate", { body: {} });
+        toast(r.ideas.length ? r.ideas.length + " new idea(s)." : "Nothing new to suggest right now.");
+      } catch (e) { toast("Couldn't suggest: " + errMsg(e)); }
+      gen.disabled = false; gen.textContent = "Suggest ideas now"; refresh();
+    });
+    addBtn.addEventListener("click", async () => {
+      if (!add.value.trim()) return;
+      try { await API.req("POST", "/v1/ideas", { body: { title: add.value.trim() } }); add.value = ""; refresh(); }
+      catch (e) { toast(errMsg(e)); }
+    });
+    async function refresh() {
+      list.innerHTML = "";
+      let ideas = [];
+      try { ideas = (await API.req("GET", "/v1/ideas")).ideas; } catch (e) { list.appendChild(el("div", { class: "memv-empty", text: "Ideas unavailable: " + errMsg(e) })); return; }
+      if (!ideas.length) list.appendChild(el("div", { class: "memv-empty", text: "No ideas yet. The more OpenMuse knows (chats, goals, connected apps), the better its suggestions." }));
+      ideas.forEach((i) => {
+        const c = el("div", { class: "memv-item idea-card" });
+        const top = el("div", { class: "memv-item-top" }, [el("span", { class: "memv-badge", text: i.source === "user" ? "Your idea" : "Suggested" })]);
+        if (i.from_email) top.appendChild(el("span", { class: "memv-badge warn", text: "from email" }));
+        c.appendChild(top);
+        c.appendChild(el("div", { class: "memv-pname", text: i.title }));
+        if (i.rationale) c.appendChild(el("div", { class: "memv-text", text: i.rationale }));
+        if ((i.evidence || []).length) {
+          const ev = el("div", { class: "idea-ev" });
+          ev.appendChild(el("span", { class: "memv-meta", text: "Because:" }));
+          i.evidence.forEach((e) => ev.appendChild(el("span", { class: "memv-badge soft", title: e.kind, text: e.label })));
+          c.appendChild(ev);
+        }
+        if (i.from_email || (i.action_prompt && i.action_prompt !== i.title)) {
+          c.appendChild(el("div", { class: "memv-meta idea-plan", text: "If you say yes, OpenMuse will: " + i.action_prompt }));
+        }
+        const acts = el("div", { class: "sched-acts" });
+        const doit = el("button", { type: "button", class: "btn small", text: "Do it" });
+        doit.addEventListener("click", async () => {
+          doit.disabled = true;
+          try { const r = await API.req("POST", "/v1/ideas/" + i.idea_id + "/accept", { body: {} }); toast("On it."); if (state.openChat) state.openChat(r.chat_id); }
+          catch (e) { toast(errMsg(e)); doit.disabled = false; }
+        });
+        acts.appendChild(doit);
+        [["Tomorrow", 1], ["Next week", 7]].forEach(([label, days]) => {
+          const b = el("button", { type: "button", class: "btn small secondary", text: "Snooze · " + label });
+          b.addEventListener("click", async () => { await API.req("POST", "/v1/ideas/" + i.idea_id + "/snooze", { body: { days } }); refresh(); });
+          acts.appendChild(b);
+        });
+        const dis = el("button", { type: "button", class: "btn small secondary", text: "Not for me" });
+        dis.addEventListener("click", () => {
+          acts.innerHTML = "";
+          const why = el("input", { type: "text", placeholder: "Why not? (optional — helps future ideas)", "aria-label": "Reason" });
+          const ok = el("button", { type: "button", class: "btn small danger", text: "Dismiss" });
+          ok.addEventListener("click", async () => { await API.req("POST", "/v1/ideas/" + i.idea_id + "/dismiss", { body: { reason: why.value } }); toast("Got it — I won't suggest that again."); refresh(); });
+          acts.appendChild(why); acts.appendChild(ok); why.focus();
+        });
+        acts.appendChild(dis);
+        c.appendChild(acts);
+        list.appendChild(c);
+      });
+    }
+    root._refresh = refresh; refresh();
+  }
+
+  function ring(done, total) {
+    const pct = total ? done / total : 0, r = 18, c = 2 * Math.PI * r;
+    return '<svg class="ring" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="' + r + '" fill="none" stroke="currentColor" stroke-opacity=".15" stroke-width="5"/>' +
+      '<circle cx="22" cy="22" r="' + r + '" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-dasharray="' + (c * pct).toFixed(1) + " " + c.toFixed(1) + '" transform="rotate(-90 22 22)"/></svg>';
+  }
+
+  function goalsView(root) {
+    root.innerHTML = "";
+    root.classList.add("memv");
+    root.appendChild(el("div", { class: "memv-head", html: "<h1>Goals</h1><p class='muted'>What you're working toward. Tell OpenMuse a goal in chat and it drafts a plan with milestones; it updates progress as you go.</p>" }));
+    const form = el("form", { class: "memv-upload" });
+    form.innerHTML = "<strong>New goal</strong>";
+    const title = el("input", { type: "text", placeholder: "e.g. Run a half marathon", "aria-label": "Goal", required: "" });
+    const date = el("input", { type: "date", "aria-label": "Target date" });
+    const ms = el("textarea", { rows: "3", placeholder: "Milestones, one per line (optional)", "aria-label": "Milestones" });
+    const go = el("button", { type: "submit", class: "btn", text: "Add goal" });
+    [title, date, ms, go].forEach((n) => form.appendChild(n));
+    root.appendChild(form);
+    const list = el("div", {});
+    root.appendChild(list);
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try {
+        await API.req("POST", "/v1/goals", { body: { title: title.value, target_date: date.value,
+          milestones: ms.value.split("\n").map((s) => s.trim()).filter(Boolean) } });
+        form.reset(); refresh();
+      } catch (err) { toast(errMsg(err)); }
+    });
+    const patchGoal = (id, body) => API.req("PATCH", "/v1/goals/" + id, { body }).then(refresh).catch((e) => toast(errMsg(e)));
+    async function refresh() {
+      list.innerHTML = "";
+      let goals = [];
+      try { goals = (await API.req("GET", "/v1/goals")).goals; } catch (e) { list.appendChild(el("div", { class: "memv-empty", text: "Goals unavailable: " + errMsg(e) })); return; }
+      const shown = goals.filter((g) => g.status !== "archived");
+      if (!shown.length) list.appendChild(el("div", { class: "memv-empty", text: "No goals yet." }));
+      shown.forEach((g) => {
+        const done = g.milestones.filter((m) => m.done).length;
+        const c = el("div", { class: "memv-item goal-card" + (g.status === "done" ? " old" : "") });
+        const head = el("div", { class: "goal-head" });
+        const rg = el("div", { class: "goal-ring" }); rg.innerHTML = ring(done, g.milestones.length);
+        rg.appendChild(el("span", { text: g.milestones.length ? done + "/" + g.milestones.length : "—" }));
+        const meta = el("div", {});
+        meta.appendChild(el("div", { class: "memv-pname", text: g.title }));
+        meta.appendChild(el("div", { class: "memv-meta", text: [g.status !== "active" ? g.status : "", g.target_date ? "by " + g.target_date : "",
+          g.activity.length ? "updated " + new Date(g.updated_at * 1000).toLocaleDateString([], { month: "short", day: "numeric" }) : ""].filter(Boolean).join(" · ") }));
+        head.appendChild(rg); head.appendChild(meta);
+        c.appendChild(head);
+        if (g.milestones.length) {
+          const ul = el("ul", { class: "goal-ms" });
+          g.milestones.forEach((m) => {
+            const li = el("li", { class: m.done ? "done" : "" });
+            const cb = el("input", { type: "checkbox", "aria-label": m.title });
+            cb.checked = m.done; cb.disabled = m.done;
+            cb.addEventListener("change", () => patchGoal(g.goal_id, { complete_milestone: m.id }));
+            li.appendChild(cb); li.appendChild(el("span", { text: m.title + (m.due ? " · " + m.due : "") }));
+            ul.appendChild(li);
+          });
+          c.appendChild(ul);
+        }
+        const last = g.activity[g.activity.length - 1];
+        if (last && last.text !== "Goal created") c.appendChild(el("div", { class: "memv-meta", text: "Latest: " + last.text }));
+        const acts = el("div", { class: "sched-acts" });
+        const mk = (label, fn, cls) => { const b = el("button", { type: "button", class: "btn small " + (cls || "secondary"), text: label }); b.addEventListener("click", fn); acts.appendChild(b); };
+        mk("Add note", () => {
+          const inp = el("input", { type: "text", placeholder: "Progress note", "aria-label": "Progress note" });
+          const ok = el("button", { type: "button", class: "btn small", text: "Save" });
+          ok.addEventListener("click", () => inp.value.trim() && patchGoal(g.goal_id, { note: inp.value.trim() }));
+          acts.innerHTML = ""; acts.appendChild(inp); acts.appendChild(ok); inp.focus();
+        });
+        if (g.status === "active") mk("Mark done", () => patchGoal(g.goal_id, { status: "done" }));
+        mk(g.status === "paused" ? "Resume" : "Pause", () => patchGoal(g.goal_id, { status: g.status === "paused" ? "active" : "paused" }));
+        mk("Archive", () => patchGoal(g.goal_id, { status: "archived" }), "danger");
+        c.appendChild(acts);
+        list.appendChild(c);
+      });
+    }
+    root._refresh = refresh; refresh();
+  }
+
+  function feedView(root) {
+    root.innerHTML = "";
+    root.classList.add("memv");
+    root.appendChild(el("div", { class: "memv-head", html: "<h1>Feed</h1><p class='muted'>Updates OpenMuse posted for you — results worth keeping from background work.</p>" }));
+    const list = el("div", {});
+    root.appendChild(list);
+    async function refresh() {
+      list.innerHTML = "";
+      let items = [];
+      try { items = (await API.req("GET", "/v1/feed")).items; } catch (e) { list.appendChild(el("div", { class: "memv-empty", text: "Feed unavailable: " + errMsg(e) })); return; }
+      if (!items.length) list.appendChild(el("div", { class: "memv-empty", text: "Nothing in your feed yet." }));
+      items.forEach((f) => {
+        const c = el("div", { class: "memv-item" });
+        c.appendChild(el("div", { class: "memv-item-top" }, [el("span", { class: "memv-badge soft", text: f.source }),
+          el("span", { class: "memv-badge soft", text: new Date(f.created_at * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) })]));
+        c.appendChild(el("div", { class: "memv-pname", text: f.title }));
+        if (f.body) c.appendChild(el("div", { class: "memv-text", text: f.body }));
+        const acts = el("div", { class: "sched-acts" });
+        if (f.url) acts.appendChild(el("a", { class: "btn small secondary", href: f.url, target: "_blank", rel: "noopener noreferrer", text: "Open" }));
+        const d = el("button", { type: "button", class: "btn small secondary", text: "Dismiss" });
+        d.addEventListener("click", async () => { await API.req("POST", "/v1/feed/" + f.item_id + "/dismiss", { body: {} }); refresh(); });
+        acts.appendChild(d);
+        c.appendChild(acts);
+        list.appendChild(c);
+      });
+    }
+    root._refresh = refresh; refresh();
+  }
+
   /* -- monitors view (issue #11) --------------------------------------------- */
   function sparkline(points) {
     const vals = (points || []).map((p) => p[1]).filter((v) => typeof v === "number");
@@ -2181,6 +2248,7 @@
       if (!note.read_at) { note.read_at = Date.now() / 1000; this.renderDot(); API.notifications.read(note.id).catch(() => {}); }
       if (note.link && note.link.chat_id && state.openChat) state.openChat(note.link.chat_id);
       else if (note.link && note.link.monitor_id) showTab("monitors");
+      else if (note.link && note.link.tab) showTab(note.link.tab);
     },
     renderPanel(panel) {
       panel.innerHTML = "";
