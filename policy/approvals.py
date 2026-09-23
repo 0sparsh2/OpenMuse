@@ -136,3 +136,38 @@ class ApprovalService:
     def consume(self, grant: ApprovalGrant) -> None:
         if grant.single_use:
             grant.used = True
+
+
+class AutonomousDecider(ApprovalDecider):
+    """User-enabled autonomy: reversible local steps run without a prompt.
+
+    Auto-approves R1/R2 requests whose effect stays local and reversible —
+    browsing (navigate/click/type/select/scroll/wait/back), reading memory,
+    notes, workspace files. Everything else falls through to the human
+    (ManualDecider -> WAITING_FOR_APPROVAL): browser commits, uploads and
+    credential fills, shell, account connections, memory deletion,
+    schedules, production/admin tools, any external write, and R3+.
+    The operator's commit barrier still stops purchase-like clicks, and every
+    auto-approval is still a recorded, argument-bound, single-use grant.
+    """
+
+    AUTO_RISKS = {"R1", "R2"}
+    HOLD_PREFIXES = ("shell.", "connector.", "production.", "scheduler.")
+    HOLD_TOOLS = {"memory.forget", "subagent.spawn", "subagent.send"}
+    SAFE_BROWSER_KINDS = {"navigate", "click", "type", "select", "scroll", "wait", "back"}
+
+    def __init__(self, fallback: ApprovalDecider | None = None):
+        self.fallback = fallback or ManualDecider()
+
+    def decide(self, request: ApprovalRequest) -> str:
+        tool = request.tool_name
+        held = (request.risk not in self.AUTO_RISKS
+                or tool in self.HOLD_TOOLS
+                or tool.startswith(self.HOLD_PREFIXES))
+        if tool == "browser.act":
+            action = (request.bind_fields or {}).get("action") or {}
+            held = held or action.get("kind") not in self.SAFE_BROWSER_KINDS \
+                or bool(action.get("text_ref"))
+        if held:
+            return self.fallback.decide(request)
+        return "approved"

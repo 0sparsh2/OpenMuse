@@ -31,6 +31,7 @@ class EventLog:
     def __init__(self, run_id: str, *, jsonl_path: Optional[str] = None):
         self.run_id = run_id
         self.events: list[Event] = []
+        self.on_append = None  # optional live listener: fn(event)
         self._jsonl = None
         if jsonl_path:
             self._jsonl = open(jsonl_path, "a", encoding="utf-8")
@@ -57,6 +58,8 @@ class EventLog:
                 "payload": payload, "payload_sha256": event.payload_sha256,
             }, ensure_ascii=False) + "\n")
             self._jsonl.flush()
+        if self.on_append is not None:
+            self.on_append(event)
         return event
 
     def of_type(self, type: str) -> list[Event]:

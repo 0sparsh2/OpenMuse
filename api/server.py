@@ -68,6 +68,9 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         ("GET", r"^/v1/webhooks$", "list_webhooks", "webhooks:write", False),
         ("POST", r"^/v1/webhooks$", "create_webhook", "webhooks:write", False),
         ("DELETE", r"^/v1/webhooks/(?P<wid>[^/]+)$", "delete_webhook", "webhooks:write", False),
+        ("GET", r"^/v1/browser/sessions/(?P<bsid>[^/]+)$", "browser_session", "runs:read", False),
+        ("GET", r"^/v1/browser/sessions/(?P<bsid>[^/]+)/frame$", "browser_frame", "runs:read", False),
+        ("POST", r"^/v1/browser/sessions/(?P<bsid>[^/]+)/input$", "browser_input", "runs:write", False),
         ("GET", r"^/openapi.json$", "openapi_doc", None, False),
     ]
 
@@ -325,6 +328,50 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
         return None  # response already streamed; skip _send_json
+
+    # -- live browser view ----------------------------------------------------
+    def _live_browser(self):
+        op = self.backend.browser
+        return op if op is not None and hasattr(op, "session_info") else None
+
+    def h_browser_session(self, params):
+        op = self._live_browser()
+        info = op.session_info(params["bsid"]) if op else None
+        if info is None:
+            return 404, E.envelope(E.NOT_FOUND[0], E.NOT_FOUND[2], self._request_id, {"browser_session": params["bsid"]}), None
+        info = dict(info, run_id=self.backend._browser_runs.get(params["bsid"]))
+        return 200, info, None
+
+    def h_browser_frame(self, params):
+        op = self._live_browser()
+        info = op.session_info(params["bsid"]) if op else None
+        if info is None:
+            return 404, E.envelope(E.NOT_FOUND[0], E.NOT_FOUND[2], self._request_id, {"browser_session": params["bsid"]}), None
+        frame, seq = op.frame(params["bsid"])
+        if not frame:
+            return 404, E.envelope(E.NOT_FOUND[0], E.NOT_FOUND[2], self._request_id, {"frame": "none yet"}), None
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(frame)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Frame-Seq", str(seq))
+        self.send_header("X-Request-ID", self._request_id)
+        self.end_headers()
+        self.wfile.write(frame)
+        return None
+
+    def h_browser_input(self, params):
+        from browser.operator import BrowserError
+        op = self._live_browser()
+        if op is None or op.session_info(params["bsid"]) is None:
+            return 404, E.envelope(E.NOT_FOUND[0], E.NOT_FOUND[2], self._request_id, {"browser_session": params["bsid"]}), None
+        body = self._parse_json()
+        try:
+            info = op.user_input(params["bsid"], body)
+        except BrowserError as exc:
+            return 409, {"error": {"code": exc.code, "message": str(exc),
+                                   "request_id": self._request_id}}, None
+        return 200, info, None
 
     def h_cancel_run(self, params):
         result = self.backend.cancel_run(params["rid"])

@@ -172,6 +172,22 @@ class UiHandler(BaseHTTPRequestHandler):
                                      method=self.command)
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
+                if resp.headers.get("Content-Type", "").startswith("text/event-stream"):
+                    # stream SSE through as it arrives (buffering would hide live progress)
+                    self.send_response(resp.status)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.end_headers()
+                    try:
+                        while True:
+                            chunk = resp.read1(8192)
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                            self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+                    return
                 body = resp.read()
                 self.send_response(resp.status)
                 ctype = resp.headers.get("Content-Type", "application/octet-stream")

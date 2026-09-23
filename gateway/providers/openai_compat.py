@@ -67,12 +67,43 @@ def _flatten_blocks(blocks: list[Block]) -> str:
     return "\n\n".join(p for p in parts if p)
 
 
+def _wire_name(name: str) -> str:
+    """OpenAI-compatible APIs only allow [a-zA-Z0-9_-] in function names."""
+    return name.replace(".", "__")
+
+
+def _internal_name(name: str) -> str:
+    return name.replace("__", ".")
+
+
+def _coerce_json_strings(args, schema: dict | None):
+    """Some models send nested objects as JSON-encoded strings; decode them
+    where the tool schema expects an object/array (recursively)."""
+    if not isinstance(args, dict) or not schema:
+        return args
+    props = schema.get("properties") or {}
+    out = dict(args)
+    for key, value in args.items():
+        sub = props.get(key) or {}
+        if isinstance(value, str) and sub.get("type") in ("object", "array"):
+            try:
+                decoded = json.loads(value)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(decoded, (dict, list)):
+                value = decoded
+        if isinstance(value, dict) and sub.get("type") == "object":
+            value = _coerce_json_strings(value, sub)
+        out[key] = value
+    return out
+
+
 def _to_openai_message(msg: ChatMessage) -> dict:
     if msg.role == "tool":
         return {
             "role": "tool",
             "tool_call_id": msg.tool_call_id,
-            "name": msg.name,
+            "name": _wire_name(msg.name or ""),
             "content": _flatten_blocks(msg.blocks),
         }
     out: dict = {"role": msg.role, "content": _flatten_blocks(msg.blocks) or None}
@@ -82,7 +113,7 @@ def _to_openai_message(msg: ChatMessage) -> dict:
                 "id": tc.id,
                 "type": "function",
                 "function": {
-                    "name": tc.name,
+                    "name": _wire_name(tc.name),
                     "arguments": json.dumps(tc.arguments),
                 },
             }
@@ -122,7 +153,7 @@ class OpenAICompatProvider(Provider):
                 {
                     "type": "function",
                     "function": {
-                        "name": t.name,
+                        "name": _wire_name(t.name),
                         "description": t.description,
                         "parameters": t.input_schema,
                     },
@@ -168,6 +199,7 @@ class OpenAICompatProvider(Provider):
         except (KeyError, IndexError) as exc:
             raise ProviderError(INVALID_REQUEST, f"malformed provider response: {exc}")
 
+        schemas = {t.name: t.input_schema for t in request.tools or []}
         tool_calls: list[ToolCall] = []
         for tc in choice.get("tool_calls") or []:
             fn = tc.get("function", {})
@@ -175,7 +207,9 @@ class OpenAICompatProvider(Provider):
                 args = json.loads(fn.get("arguments") or "{}")
             except json.JSONDecodeError as exc:
                 raise ProviderError(INVALID_REQUEST, f"provider returned invalid tool arguments: {exc}")
-            tool_calls.append(ToolCall(id=tc.get("id", ""), name=fn.get("name", ""), arguments=args))
+            name = _internal_name(fn.get("name", ""))
+            args = _coerce_json_strings(args, schemas.get(name))
+            tool_calls.append(ToolCall(id=tc.get("id", ""), name=name, arguments=args))
 
         usage = data.get("usage") or {}
         return ModelResponse(

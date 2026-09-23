@@ -99,7 +99,7 @@ class ContextBuilder:
                     role="system",
                     blocks=[Block(kind="text", text="WORKING MEMORY (turn-scoped):\n" + wm_text)],
                 ))
-        messages.extend(run.messages)  # 2,3,7,8 live here as typed blocks
+        messages.extend(compact_browser_history(run.messages))  # 2,3,7,8 live here as typed blocks
 
         metadata = RequestMetadata(
             tenant_id=run.tenant_id, run_id=run.run_id, step=run.step,
@@ -174,3 +174,48 @@ class ContextBuilder:
                 with open(path, "rb") as fh:
                     out[filename] = "sha256:" + hashlib.sha256(fh.read()).hexdigest()[:16]
         return out
+
+
+# Browser observations are large (page text + element list) and go stale on
+# the next action. Keep the most recent ones verbatim and collapse older ones
+# to a one-line trace, so long browsing runs stay fast and within context.
+# run.messages itself is untouched (full audit trail).
+KEEP_BROWSER_RESULTS = 2
+
+
+def compact_browser_history(messages: list) -> list:
+    idx = [i for i, m in enumerate(messages)
+           if m.role == "tool" and (m.name or "").startswith("browser.")]
+    stale = set(idx[:-KEEP_BROWSER_RESULTS]) if len(idx) > KEEP_BROWSER_RESULTS else set()
+    if not stale:
+        return list(messages)
+    out = []
+    for i, m in enumerate(messages):
+        if i not in stale:
+            out.append(m)
+            continue
+        blocks = []
+        for b in m.blocks:
+            blocks.append(Block(kind=b.kind, text=_browser_trace(b.text), source=b.source,
+                                source_ref=b.source_ref, trust=b.trust,
+                                sensitivity=b.sensitivity) if b.kind == "data" else b)
+        out.append(ChatMessage(role=m.role, name=m.name, tool_call_id=m.tool_call_id,
+                               blocks=blocks, tool_calls=m.tool_calls))
+    return out
+
+
+def _browser_trace(text: str) -> str:
+    import json as _json
+    head, _, body = (text or "").partition("\n")
+    try:
+        data = _json.loads(body)
+    except ValueError:
+        return head + " [older observation elided]"
+    obs = data.get("observation") if isinstance(data.get("observation"), dict) else data
+    bits = [f"status={data.get('status', 'ok')}"]
+    for key in ("navigated_to", "clicked", "typed_into", "selected", "scrolled", "code", "message"):
+        if data.get(key):
+            bits.append(f"{key}={str(data[key])[:120]}")
+    if isinstance(obs, dict) and obs.get("url"):
+        bits.append(f"page={obs.get('title', '')[:80]} <{obs['url'][:160]}>")
+    return head + " [older observation elided; element ids expired] " + "; ".join(bits)

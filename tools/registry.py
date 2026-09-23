@@ -27,6 +27,8 @@ class ToolDefinition:
     default_timeout_ms: int
     data_classes_accepted: list[str] = field(default_factory=lambda: ["public", "personal"])
     execute: Callable[..., Any] | None = None  # (ctx, input) -> output dict
+    # Optional: extra fields an approval must bind to (e.g. commit origin/amount).
+    approval_bind_fields: Callable[[dict], dict] | None = None
 
 
 class UnknownToolError(KeyError):

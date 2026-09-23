@@ -280,8 +280,10 @@ def register(registry: ToolRegistry, operator: BrowserOperator,
         output_schema=ENVELOPE_SCHEMA,
         capabilities=["browser.act"], side_effect="local_write",
         # Never auto-retry: "click purchase" must not replay from uncertainty.
-        idempotency="unsafe_retry", default_timeout_ms=30_000,
+        # 90s covers a real page load plus a user-control pause (live operator).
+        idempotency="unsafe_retry", default_timeout_ms=90_000,
         execute=act,
+        approval_bind_fields=lambda args: _commit_bind_fields(operator, args),
     ))
 
     def checkpoint(ctx, args):
@@ -347,6 +349,14 @@ def _obs_view(operator: BrowserOperator, session_id: str) -> dict:
         "cart": cart_of(session_id) if cart_of else [],
         "captured_at": obs.captured_at,
     }
+
+
+def _commit_bind_fields(operator: BrowserOperator, args: dict) -> dict:
+    """confirm_commit approvals bind to the pending proposal's exact fields."""
+    if (args.get("action") or {}).get("kind") != "confirm_commit":
+        return {}
+    proposal = _pending_proposal(operator, args.get("session_id", ""))
+    return proposal.bind_fields() if proposal is not None else {}
 
 
 def _pending_proposal(operator: BrowserOperator, session_id: str):

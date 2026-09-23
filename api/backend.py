@@ -22,7 +22,7 @@ import uuid
 from dataclasses import dataclass
 
 from agent import RunStore, ContextBuilder, Deps, advance_run
-from agent.models import TERMINAL, WAITING_FOR_APPROVAL
+from agent.models import TERMINAL, WAITING_FOR_APPROVAL, RunBudgets
 from gateway import Block, ChatMessage, Router
 from gateway.providers.mock import ProgrammableMockProvider
 from observability import EventLog
@@ -76,6 +76,8 @@ class ApiBackend:
         webhook_deliver=None,
         tenant_id: str = "tenant_demo",
         default_namespaces: set[str] | None = None,
+        browser_operator=None,
+        run_budgets: RunBudgets | None = None,
     ):
         self.tenant_id = tenant_id
         self.workspace_root = workspace_root
@@ -89,6 +91,17 @@ class ApiBackend:
         self.registry = build_registry()
         self.policy = PolicyEngine(os.path.join(ROOT, "policies", "tool-capabilities.yaml"))
         self.approvals = ApprovalService()
+        self.run_budgets = run_budgets
+        # Optional live browser (browser.live_operator): registers browser.* and
+        # powers the /v1/browser/sessions live-view endpoints.
+        self.browser = browser_operator
+        if browser_operator is not None:
+            from browser import register as register_browser
+            register_browser(self.registry, browser_operator, approvals=self.approvals)
+        self._browser_runs: dict[str, str] = {}   # browser session_id -> latest run_id
+        self._chat_browser: dict[str, str] = {}   # chat_id -> open browser session_id
+        self._translate_locks: dict[str, threading.RLock] = {}
+        self._last_requested: dict[str, dict] = {}
         self.decider = ManualDecider()  # production path: approvals resolve via the API
         self.context_builder = ContextBuilder(
             prompts_dir=os.path.join(ROOT, "prompts"),
@@ -168,13 +181,20 @@ class ApiBackend:
         msg = ChatMessage(role="user", blocks=self._blocks_from_content(content),
                           tool_calls=[])
         msg_id = "msg_" + uuid.uuid4().hex[:12]
+        history = self._chat_history(chat_id)
         run, created = self.runs.submit(
             tenant_id=self.tenant_id, chat_id=chat_id, user_id=user_id,
             user_message=msg, idempotency_key=idempotency_key or "",
+            budgets=self.run_budgets,
         )
         if created:
+            run.messages[:0] = history
             run.loaded_namespaces.update(self.default_namespaces)
+            if self._chat_browser.get(chat_id):
+                run.loaded_namespaces.add("browser")
             self._logs[run.run_id] = EventLog(run.run_id)
+            self._logs[run.run_id].on_append = (
+                lambda _evt, rid=run.run_id: self._translate_new_events(rid))
             self._emitted[run.run_id] = 0
             self.eventbus.publish(run.run_id, M.SSE_RUN_STATUS,
                                   {"status": run.state, "message_id": msg_id})
@@ -182,6 +202,35 @@ class ApiBackend:
                                  daemon=True, name=f"run-{run.run_id}")
             t.start()
         return run, created, msg_id
+
+    def _chat_history(self, chat_id: str, *, max_turns: int = 8) -> list[ChatMessage]:
+        """Prior finished turns of this chat (user text + final answer), so a
+        follow-up like "book the 7:30 one" has context. Tool traffic is not
+        replayed; an open browser session is surfaced as a runtime note."""
+        prior = [r for r in self.runs._runs.values()
+                 if r.chat_id == chat_id and r.state in TERMINAL]
+        prior.sort(key=lambda r: r.created_at if hasattr(r, "created_at") else 0)
+        out: list[ChatMessage] = []
+        for r in prior[-max_turns:]:
+            user = next((m for m in r.messages if m.role == "user"
+                         and any(b.trust == "user" for b in m.blocks)), None)
+            if user is None:
+                continue
+            out.append(ChatMessage(role="user", blocks=[b for b in user.blocks
+                                                       if b.trust == "user"]))
+            if r.final_text:
+                out.append(ChatMessage(role="assistant",
+                                       blocks=[Block(kind="text", text=r.final_text)]))
+        sid = self._chat_browser.get(chat_id)
+        info = self.browser.session_info(sid) if (sid and self.browser is not None
+                                                 and hasattr(self.browser, "session_info")) else None
+        if info and info.get("state") != "closed":
+            out.append(ChatMessage(role="user", blocks=[Block(
+                kind="text", trust="user",
+                text=f"[Runtime note — trusted] Your browser session {sid} is still open "
+                     f"at {info.get('url')} ({info.get('title')}). Reuse it with "
+                     f"browser.observe / browser.act instead of starting a new one.")]))
+        return out
 
     def _execute_run(self, run_id: str) -> None:
         with self._run_lock(run_id):
@@ -213,17 +262,83 @@ class ApiBackend:
 
     # -- internal event -> SSE translation ----------------------------------
     def _translate_new_events(self, run_id: str) -> None:
+        lock = self._translate_locks.setdefault(run_id, threading.RLock())
+        with lock:
+            self._translate_locked(run_id)
+
+    def _tool_args(self, run, call_id: str) -> dict:
+        for m in reversed(run.messages):
+            for tc in (m.tool_calls or []):
+                if tc.id == call_id:
+                    args = dict(tc.arguments or {})
+                    for k, v in list(args.items()):
+                        if isinstance(v, str) and len(v) > 200:
+                            args[k] = v[:200] + "…"
+                    return args
+        return {}
+
+    def _browser_event(self, run_id: str, run, t: str, p: dict) -> None:
+        sid = p.get("session_id", "")
+        if not sid:
+            return
+        self._browser_runs[sid] = run_id
+        if t == "browser.session_started":
+            self._chat_browser[run.chat_id] = sid
+            self.eventbus.publish(run_id, "browser.session", {"session_id": sid, "state": "open"})
+            return
+        if t == "browser.session_closed":
+            if self._chat_browser.get(run.chat_id) == sid:
+                self._chat_browser.pop(run.chat_id, None)
+            self.eventbus.publish(run_id, "browser.session", {"session_id": sid, "state": "closed"})
+            return
+        info = (self.browser.session_info(sid)
+                if self.browser is not None and hasattr(self.browser, "session_info") else None) or {}
+        last = info.get("last_action") or {}
+        status = {"browser.commit_proposed": "commit_proposed",
+                  "browser.challenge_detected": "challenge_paused",
+                  "browser.denied": "refused"}.get(t, p.get("status", "ok"))
+        self.eventbus.publish(run_id, "browser.action", {
+            "session_id": sid, "kind": p.get("kind", t.split(".", 1)[1]),
+            "status": status, "label": last.get("label", ""),
+            "url": info.get("url", p.get("url", "")), "title": info.get("title", ""),
+            "code": p.get("code"),
+        })
+
+    def _translate_locked(self, run_id: str) -> None:
         run = self.runs.get(run_id)
         log = self._logs[run_id]
         start = self._emitted.get(run_id, 0)
-        last_requested: dict = {}
+        last_requested: dict = self._last_requested.setdefault(run_id, {})
         for evt in log.events[start:]:
+            self._emitted[run_id] = evt.sequence + 1
             p = evt.payload or {}
             t = evt.type
             if t == "run.transition":
                 self.eventbus.publish(run_id, M.SSE_RUN_STATUS, {"status": p.get("to")})
+            elif t == "policy.decisions":
+                for d in p.get("decisions", []):
+                    if d.get("decision") in ("ALLOW", "ASK", "DENY"):
+                        self.eventbus.publish(run_id, "tool.call", {
+                            "call_id": d.get("call_id"), "tool": d.get("tool"),
+                            "decision": d.get("decision"), "reason": d.get("reason"),
+                            "args": self._tool_args(run, d.get("call_id")),
+                        })
+            elif t.startswith("browser."):
+                self._browser_event(run_id, run, t, p)
+            elif t == "tool.result":
+                if p.get("tool") == "tools.load_namespace" and p.get("status") == "succeeded":
+                    # the shared registry's loaded set is server-wide; make the
+                    # namespace's schemas part of THIS run's next model request
+                    ns = self._tool_args(run, p.get("call_id")).get("name")
+                    if ns:
+                        run.loaded_namespaces.add(ns)
+                self.eventbus.publish(run_id, M.SSE_TOOL_RESULT, {
+                    "call_id": p.get("call_id"), "tool": p.get("tool"),
+                    "ok": p.get("status") == "succeeded",
+                })
             elif t == "approval.requested":
-                last_requested = p
+                last_requested.clear()
+                last_requested.update(p)
             elif t == "approval.parked":
                 aid = p.get("approval_id") or last_requested.get("approval_id", "")
                 self._pending_approval[run_id] = aid
@@ -263,7 +378,6 @@ class ApiBackend:
                 })
             elif t == "run.cancelled":
                 self.eventbus.publish(run_id, M.SSE_RUN_CANCELLED, {"run_id": run_id})
-        self._emitted[run_id] = len(log.events)
 
     def _finish_run(self, run_id: str) -> None:
         run = self.runs.get(run_id)

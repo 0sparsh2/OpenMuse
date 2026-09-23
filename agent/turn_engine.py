@@ -233,7 +233,9 @@ def advance_run(run: Run, deps: Deps, log: EventLog) -> Run:
                     run_id=run.run_id, tenant_id=run.tenant_id,
                     tool_name=p.tool_name, tool_version=p.tool.version,
                     argument_hash=p.argument_hash,
-                    bind_fields=_summarize_args(p.arguments),
+                    bind_fields={**_summarize_args(p.arguments),
+                                 **(p.tool.approval_bind_fields(p.arguments)
+                                    if getattr(p.tool, "approval_bind_fields", None) else {})},
                     risk=deps.policy.risk_of(p.tool_name),
                     template=decision.approval_template,
                 )

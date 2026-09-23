@@ -57,6 +57,22 @@
              state: body.status, streamUrl: body.stream_url };
   }
 
+  /* -- live browser view --------------------------------------------- */
+  async function browserSession(sessionId) {
+    return req("GET", "/v1/browser/sessions/" + encodeURIComponent(sessionId));
+  }
+  async function browserFrameURL(sessionId) {
+    const h = {};
+    if (store.apiKey) h["Authorization"] = "Bearer " + store.apiKey;
+    const resp = await fetch("/v1/browser/sessions/" + encodeURIComponent(sessionId) + "/frame",
+                             { headers: h, cache: "no-store" });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    return URL.createObjectURL(await resp.blob());
+  }
+  async function browserInput(sessionId, event) {
+    return req("POST", "/v1/browser/sessions/" + encodeURIComponent(sessionId) + "/input", { body: event });
+  }
+
   async function getRun(runId) { return req("GET", "/v1/runs/" + encodeURIComponent(runId)); }
   async function cancelRun(runId) { return req("POST", "/v1/runs/" + encodeURIComponent(runId) + "/cancel"); }
 
@@ -93,8 +109,29 @@
   }
   streamRun.cursors = {};
 
-  /* Fetch-based SSE reader (used when an Authorization header is needed). */
-  async function streamRunFetch(runId, { onEvent, lastEventId, signal } = {}) {
+  /* Fetch-based SSE reader (used when an Authorization header is needed).
+   * The server closes each stream after ~20s; reconnect from the last event
+   * id until the run reaches a terminal event. */
+  async function streamRunFetch(runId, opts = {}) {
+    let finished = false;
+    const onEvent = (ev) => {
+      if (ev.name === "run.completed" || ev.name === "run.failed" || ev.name === "run.cancelled") finished = true;
+      if (opts.onEvent) opts.onEvent(ev);
+    };
+    let lastEventId = opts.lastEventId;
+    for (let attempt = 0; !finished && attempt < 500; attempt++) {
+      if (opts.signal && opts.signal.aborted) return;
+      try {
+        await streamRunFetchOnce(runId, { onEvent, lastEventId, signal: opts.signal });
+      } catch (e) {
+        if (e.message && /HTTP 4\d\d/.test(e.message)) throw e;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      lastEventId = streamRun.cursors[runId];
+    }
+  }
+
+  async function streamRunFetchOnce(runId, { onEvent, lastEventId, signal } = {}) {
     const cursors = streamRun.cursors;
     const startFrom = lastEventId !== undefined ? lastEventId : (cursors[runId] || null);
     let url = "/v1/runs/" + encodeURIComponent(runId) + "/events";
@@ -113,7 +150,8 @@
       try { data = cur.data ? JSON.parse(cur.data) : {}; } catch (e) { /* keep {} */ }
       if (cur.id) cursors[runId] = cur.id;
       if (onEvent) onEvent({ id: cur.id, name: cur.event, data });
-      const done = cur.event === "run.completed";
+      const done = cur.event === "run.completed" || cur.event === "run.failed" ||
+        cur.event === "run.cancelled";
       cur = {};
       return done;
     }
@@ -247,6 +285,7 @@
     store, req, uuid,
     createSession, sendMessage, getRun, cancelRun,
     streamRun, streamRunFetch,
+    browserSession, browserFrameURL, browserInput,
     getApproval, decideApproval, approvalCard, deviceAuthenticate, HIGH_RISK,
     uploadArtifact, downloadArtifact,
     local, queue,
