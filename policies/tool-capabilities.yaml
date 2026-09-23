@@ -15,6 +15,27 @@ tools:
     risk: R2
     capabilities: [monitor.manage]
     side_effect: local_write
+  docs.list:
+    risk: R0
+    capabilities: [docs.read]
+    side_effect: none
+  docs.read:
+    risk: R1
+    capabilities: [docs.read]
+    side_effect: none
+  docs.pdf_fields:
+    risk: R1
+    capabilities: [docs.read]
+    side_effect: none
+  docs.pdf_fill:
+    risk: R2
+    capabilities: [docs.write]
+    side_effect: local_write
+    # Writes a NEW filled copy to the user's Library; the original is never modified.
+  docs.create:
+    risk: R2
+    capabilities: [docs.write]
+    side_effect: local_write
   task.plan:
     risk: R0
     capabilities: [task.plan]

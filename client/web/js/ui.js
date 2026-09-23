@@ -650,6 +650,11 @@
         "monitor.list": ["Checking your monitors", "Checked your monitors"],
         "monitor.remove": ["Removing a monitor", "Removed a monitor"],
         "shell.exec": ["Running a command", "Ran a command"],
+        "docs.list": ["Looking in your Library", "Looked in your Library"],
+        "docs.read": ["Reading a document", "Read a document"],
+        "docs.pdf_fields": ["Reading the form", "Read the form"],
+        "docs.pdf_fill": ["Filling in the form", "Filled in the form"],
+        "docs.create": ["Creating " + (a.title || "a document"), "Created " + (a.title || "a document")],
       }[blk.tool];
       if (failed) return blk.status === "Blocked by policy" ? "Blocked by policy: " + (blk.title || blk.tool) : "Couldn't finish: " + (blk.title || blk.tool);
       if (T) return done ? T[1] : T[0] + "…";
@@ -707,7 +712,17 @@
         ic.innerHTML = STEP_ICONS.file;
         meta.appendChild(el("div", { class: "mc-tool-t", text: d.title || "Document" }));
         meta.appendChild(el("div", { class: "mc-tool-s", text: d.subtitle || "Document" }));
-        if (d.url) action("Open", d.url);
+        if (d.fields && d.fields.length) {   // filled form: show values for review
+          const dl = el("dl", { class: "mc-fields" });
+          d.fields.forEach((f) => { dl.appendChild(el("dt", { text: f.label })); dl.appendChild(el("dd", { text: f.value })); });
+          card.appendChild(dl);
+        }
+        if (d.artifact_id) {
+          const b = el("button", { type: "button", class: "mc-open", text: "Open" });
+          const mime = d.mime || (/\.pdf$/i.test(d.title || "") ? "application/pdf" : "");
+          b.addEventListener("click", () => previewDoc(d.artifact_id, d.title, mime));
+          card.appendChild(b);
+        } else if (d.url) action("Open", d.url);
       } else {
         if (!d.url) return null;
         ic.innerHTML = GLOBE;
@@ -1372,61 +1387,137 @@
   }
 
   /* -- library view --------------------------------------------------------------- */
+  /* -- library (issue #14): the signed-in user's documents -------------------- */
+  const DOC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/></svg>';
+  async function fetchDoc(id) {
+    const h = {};
+    if (API.store.apiKey) h["Authorization"] = "Bearer " + API.store.apiKey;
+    const r = await fetch("/v1/library/" + encodeURIComponent(id), { headers: h });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.blob();
+  }
+  async function downloadDoc(id, name) {
+    const url = URL.createObjectURL(await fetchDoc(id));
+    const a = el("a", { href: url, download: name || "document" });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+  async function previewDoc(id, name, mime) {
+    const modal = el("div", { class: "bv-modal doc-modal", role: "dialog", "aria-modal": "true", "aria-label": "Preview " + (name || "") });
+    const panel = el("div", { class: "bv-panel" });
+    const bar = el("div", { class: "bv-bar" });
+    const close = el("button", { type: "button", class: "bv-x", "aria-label": "Close preview", text: "✕" });
+    const title = el("div", { class: "bv-url" }); title.innerHTML = DOC_ICON; title.appendChild(el("span", { class: "h", text: name || "Document" }));
+    const dl = el("button", { type: "button", class: "bv-take", text: "Download" });
+    bar.appendChild(close); bar.appendChild(title); bar.appendChild(dl);
+    const body = el("div", { class: "doc-body" });
+    body.appendChild(el("div", { class: "memv-empty", text: "Loading…" }));
+    panel.appendChild(bar); panel.appendChild(body); modal.appendChild(panel);
+    document.body.appendChild(modal);
+    let url = "";
+    const shut = () => { modal.remove(); if (url) URL.revokeObjectURL(url); document.removeEventListener("keydown", onKey); };
+    const onKey = (e) => { if (e.key === "Escape") shut(); };
+    document.addEventListener("keydown", onKey);
+    close.addEventListener("click", shut);
+    modal.addEventListener("click", (e) => { if (e.target === modal) shut(); });
+    dl.addEventListener("click", () => downloadDoc(id, name));
+    try {
+      body.innerHTML = "";
+      if ((mime || "").startsWith("image/") || mime === "application/pdf") {
+        url = URL.createObjectURL(await fetchDoc(id));
+        if (mime === "application/pdf") {
+          const wrap = el("div", { class: "doc-pdf" });
+          wrap.appendChild(el("iframe", { src: url, class: "doc-frame", title: name || "PDF" }));  // browser's own viewer
+          const alt = el("div", { class: "doc-alt" });
+          alt.appendChild(el("a", { href: url, target: "_blank", rel: "noopener", text: "Open in a new tab" }));
+          const tx = el("button", { type: "button", text: "Show text" });
+          tx.addEventListener("click", async () => {
+            const r = await API.req("GET", "/v1/library/" + encodeURIComponent(id) + "/text");
+            wrap.innerHTML = ""; wrap.appendChild(el("pre", { class: "doc-text", text: r.text || "(this PDF has no text layer)" }));
+          });
+          alt.appendChild(tx);
+          wrap.appendChild(alt);
+          body.appendChild(wrap);
+        } else {
+          body.appendChild(el("img", { src: url, alt: name || "image", class: "doc-img" }));
+        }
+      } else {
+        const r = await API.req("GET", "/v1/library/" + encodeURIComponent(id) + "/text");
+        body.appendChild(el("pre", { class: "doc-text", text: r.text || "(empty)" }));
+      }
+    } catch (e) { body.innerHTML = ""; body.appendChild(el("div", { class: "memv-empty", text: "Couldn't open: " + e.message })); }
+  }
+
   function libraryView(root) {
     root.innerHTML = "";
-    root.appendChild(el("h1", { text: "Library" }));
-    const form = el("form", { class: "card" });
-    form.innerHTML = "<h3>Upload artifact</h3>";
-    const file = el("input", { type: "file", "aria-label": "Choose file to upload" });
-    const up = el("button", { class: "btn", type: "submit", text: "Upload" });
-    form.appendChild(file); form.appendChild(up);
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      if (!file.files.length) return;
-      const f = file.files[0];
-      const meta = await API.uploadArtifact(f.name, f);
-      toast("Uploaded " + meta.name + " (" + meta.size + " bytes)");
-      refresh(meta.artifact_id);
-    });
-    root.appendChild(form);
+    root.classList.add("memv");
+    root.appendChild(el("div", { class: "memv-head", html: "<h1>Library</h1><p class='muted'>Your documents — uploads, files OpenMuse creates, and filled forms. Private to your account.</p>" }));
+    const up = el("div", { class: "memv-upload lib-up" });
+    const file = el("input", { type: "file", multiple: "", "aria-label": "Upload documents" });
+    const go = el("button", { type: "button", class: "btn", text: "Upload" });
+    up.appendChild(el("strong", { text: "Add files" }));
+    up.appendChild(el("p", { class: "muted", text: "PDFs, text, Markdown, CSV, spreadsheets or images — up to 15 MB each." }));
+    up.appendChild(file); up.appendChild(go);
+    root.appendChild(up);
+    const filters = el("div", { class: "memv-tabs", role: "tablist" });
     const list = el("div", {});
-    root.appendChild(list);
-    async function refresh(highlight) {
+    root.appendChild(filters); root.appendChild(list);
+    let docs = [], filter = "all";
+    const KIND = (d) => d.mime === "application/pdf" ? "pdf" : d.mime.startsWith("image/") ? "image"
+      : /sheet|csv/.test(d.mime) ? "sheet" : "text";
+    [["all", "All"], ["pdf", "PDFs"], ["sheet", "Spreadsheets"], ["text", "Notes & text"], ["image", "Images"]].forEach(([k, v]) => {
+      const b = el("button", { type: "button", role: "tab", "data-sec": k, text: v });
+      b.addEventListener("click", () => { filter = k; draw(); });
+      filters.appendChild(b);
+    });
+    go.addEventListener("click", async () => {
+      if (!file.files.length) { toast("Choose a file first."); return; }
+      go.disabled = true;
+      for (const f of Array.from(file.files)) {
+        try {
+          const buf = new Uint8Array(await f.arrayBuffer());
+          let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+          await API.req("POST", "/v1/library", { body: { name: f.name, content_base64: btoa(bin) } });
+          toast("Added " + f.name);
+        } catch (e) { toast(f.name + ": " + ((e.body && e.body.error && e.body.error.message) || e.message)); }
+      }
+      go.disabled = false; file.value = ""; refresh();
+    });
+    const size = (n) => n > 1e6 ? (n / 1e6).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1e3)) + " KB";
+    function draw() {
+      $$("button", filters).forEach((b) => b.setAttribute("aria-selected", b.dataset.sec === filter));
       list.innerHTML = "";
-      let items = [];
-      try { items = await API.local("GET", "/artifacts"); } catch (e) {}
-      if (!items.length) { list.appendChild(el("div", { class: "empty", text: "No artifacts yet." })); return; }
-      items.forEach((a) => {
-        const c = el("div", { class: "card" });
-        c.appendChild(el("h3", { text: a.name }));
-        c.appendChild(el("div", { class: "muted mono", text: a.artifact_id + " · " + a.size + " bytes · " + (a.content_type || "?") }));
-        const row = el("div", { class: "form-row" });
-        const dl = el("button", { class: "btn small secondary", type: "button", text: "Download" });
-        dl.addEventListener("click", async () => {
-          const { meta, bytes } = await API.downloadArtifact(a.artifact_id);
-          const blob = new Blob([bytes], { type: meta.content_type || "application/octet-stream" });
-          const link = document.createElement("a");
-          link.href = URL.createObjectURL(blob);
-          link.download = meta.name;
-          link.click();
-          setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+      const rows = docs.filter((d) => filter === "all" || KIND(d) === filter);
+      if (!rows.length) list.appendChild(el("div", { class: "memv-empty", text: docs.length ? "Nothing in this filter." : "No documents yet. Upload one, or ask OpenMuse to make a spreadsheet or PDF." }));
+      rows.forEach((d) => {
+        const c = el("div", { class: "memv-item lib-item" });
+        const ic = el("div", { class: "mc-tool-ic app-ic" }); ic.innerHTML = DOC_ICON;
+        const mid = el("div", { class: "lib-mid" });
+        const name = el("button", { type: "button", class: "lib-name", text: d.name });
+        name.addEventListener("click", () => previewDoc(d.artifact_id, d.name, d.mime));
+        mid.appendChild(name);
+        mid.appendChild(el("div", { class: "memv-meta", text: [d.source, size(d.size), new Date(d.created_at * 1000).toLocaleDateString([], { month: "short", day: "numeric" })].join(" · ") }));
+        const acts = el("div", { class: "sched-acts lib-acts" });
+        const mk = (label, fn, cls) => { const b = el("button", { type: "button", class: "btn small " + (cls || "secondary"), text: label }); b.addEventListener("click", fn); acts.appendChild(b); };
+        mk("Open", () => previewDoc(d.artifact_id, d.name, d.mime));
+        mk("Download", () => downloadDoc(d.artifact_id, d.name));
+        mk("Add to memory", async () => {
+          try { await API.req("POST", "/v1/library/" + d.artifact_id + "/memory", { body: {} }); toast("Added to memory — OpenMuse can search it now."); }
+          catch (e) { toast("Couldn't add: " + ((e.body && e.body.error && e.body.error.message) || e.message)); }
         });
-        const prev = el("button", { class: "btn small secondary", type: "button", text: "Preview" });
-        prev.addEventListener("click", async () => {
-          const { meta, bytes } = await API.downloadArtifact(a.artifact_id);
-          let text = "";
-          try { text = new TextDecoder().decode(bytes).slice(0, 4000); }
-          catch (e) { text = "(binary content — preview unavailable)"; }
-          const pre = el("pre", { class: "mono", text });
-          c.appendChild(pre);
-        });
-        row.appendChild(dl); row.appendChild(prev);
-        c.appendChild(row);
+        mk("Delete", async () => { await API.req("DELETE", "/v1/library/" + d.artifact_id); refresh(); }, "danger");
+        c.appendChild(ic); c.appendChild(mid); c.appendChild(acts);
         list.appendChild(c);
       });
     }
+    async function refresh() {
+      try { docs = (await API.req("GET", "/v1/library")).documents; } catch (e) { docs = []; }
+      draw();
+    }
     root._refresh = refresh; refresh();
   }
+
+
 
   /* -- ideas view ------------------------------------------------------------------- */
   function ideasView(root) {

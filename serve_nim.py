@@ -121,6 +121,7 @@ backend = ApiBackend(
     scheduling_root=os.path.join(state_root, "users"),   # per-user schedules + runner
     connectors=_connectors(),                             # Gmail / Calendar via Composio
     enable_monitors=True, monitors_llm=_llm_json,         # price / text / change watches
+    library_root=os.path.join(state_root, "users"),      # per-user documents & PDF forms
 )
 backend.monitors.start()
 backend.schedules.start()

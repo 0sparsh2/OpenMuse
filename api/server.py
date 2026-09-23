@@ -87,6 +87,12 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         ("GET", r"^/v1/notifications/stream$", "notifications_stream", "sessions:read", False),
         ("POST", r"^/v1/notifications/read-all$", "notifications_read_all", "sessions:read", False),
         ("POST", r"^/v1/notifications/(?P<nid>[^/]+)/read$", "notification_read", "sessions:read", False),
+        ("GET", r"^/v1/library$", "library_list", "artifacts:read", False),
+        ("POST", r"^/v1/library$", "library_upload", "artifacts:write", False),
+        ("GET", r"^/v1/library/(?P<aid>art_[a-f0-9]+)$", "library_download", "artifacts:read", False),
+        ("DELETE", r"^/v1/library/(?P<aid>art_[a-f0-9]+)$", "library_delete", "artifacts:write", False),
+        ("GET", r"^/v1/library/(?P<aid>art_[a-f0-9]+)/text$", "library_text", "artifacts:read", False),
+        ("POST", r"^/v1/library/(?P<aid>art_[a-f0-9]+)/memory$", "library_to_memory", "artifacts:write", False),
         ("GET", r"^/v1/monitors$", "list_monitors", "runs:read", False),
         ("POST", r"^/v1/monitors$", "create_monitor", "runs:write", False),
         ("PATCH", r"^/v1/monitors/(?P<mid>[^/]+)$", "update_monitor", "runs:write", False),
@@ -596,6 +602,66 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         finally:
             self.backend._note_listeners.remove(listener)
         return None
+
+    # -- library (issue #14) --------------------------------------------------------
+    def _lib(self):
+        if self.backend.library is None:
+            raise _NotFound("library")
+        return self.backend.library
+
+    def h_library_list(self, params):
+        lib = self._lib()
+        return 200, {"documents": [lib.public(r) for r in lib.list(self._uid())]}, None
+
+    def h_library_upload(self, params):
+        import base64
+        body = self._parse_json()
+        try:
+            data = base64.b64decode(body.get("content_base64", ""), validate=True)
+        except Exception:
+            raise ValueError("content_base64 is not valid base64")
+        rec = self._lib().add(self._uid(), str(body.get("name", "document"))[:200], data, source="upload")
+        return 201, {"document": self._lib().public(rec)}, None
+
+    def h_library_download(self, params):
+        lib = self._lib()
+        rec = lib.get(self._uid(), params["aid"])
+        if rec is None:
+            raise _NotFound("document")
+        data = lib.data(rec)
+        self.send_response(200)
+        self.send_header("Content-Type", rec["mime"])
+        self.send_header("Content-Length", str(len(data)))
+        safe_name = re.sub(r'[^\w .()-]', "_", rec["name"])
+        self.send_header("Content-Disposition", f'inline; filename="{safe_name}"')
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "sandbox; default-src 'none'")
+        self.send_header("X-Request-ID", self._request_id)
+        self.end_headers()
+        self.wfile.write(data)
+        return None
+
+    def h_library_text(self, params):
+        lib = self._lib()
+        rec = lib.get(self._uid(), params["aid"])
+        if rec is None:
+            raise _NotFound("document")
+        return 200, {"name": rec["name"], "text": lib.text(rec, limit=60_000)}, None
+
+    def h_library_delete(self, params):
+        if not self._lib().delete(self._uid(), params["aid"]):
+            raise _NotFound("document")
+        return 200, {"deleted": params["aid"]}, None
+
+    def h_library_to_memory(self, params):
+        lib = self._lib()
+        rec = lib.get(self._uid(), params["aid"])
+        if rec is None:
+            raise _NotFound("document")
+        if self.backend.memory is None:
+            raise _NotFound("memory service")
+        doc = self.backend.memory.ingest(self._uid(), rec["name"], data=lib.data(rec), filename=rec["name"])
+        return 201, {"document": doc}, None
 
     # -- monitors (issue #11) -------------------------------------------------------
     def _mons(self):

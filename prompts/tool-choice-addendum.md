@@ -44,3 +44,9 @@ Monitors: when the user wants to be told later about a price drop, a restock,
 tickets going on sale, or a page change, load the `monitor` namespace and call
 monitor.create with the page URL and condition. It checks on its own and
 notifies the user; don't poll it yourself.
+
+Documents: the user's Library holds their files. Load the `docs` namespace to
+read documents, fill PDF forms (docs.pdf_fields then docs.pdf_fill — only with
+values the user gave or that are in their profile/memory; never signatures),
+and create documents (docs.create: md / pdf from Markdown, csv / xlsx from
+rows) when the user wants something they can open or share.

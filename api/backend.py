@@ -87,6 +87,7 @@ class ApiBackend:
         connectors=None,
         monitors_llm=None,
         enable_monitors: bool = False,
+        library_root: str | None = None,
     ):
         self.tenant_id = tenant_id
         self.workspace_root = workspace_root
@@ -180,6 +181,13 @@ class ApiBackend:
         if connectors is not None:
             bridged = connectors.register_tools(self.registry)
             print(f"connectors: {len(bridged)} tools bridged", flush=True)
+
+        # Library (issue #14): per-user documents, PDF forms, generated files.
+        self.library = None
+        if library_root:
+            from .library import Library, register_tools as register_doc_tools
+            self.library = Library(self, library_root)
+            register_doc_tools(self.registry, self.library)
 
         # Monitors & alerts (issue #11): price / text / change watches.
         self.monitors = None
