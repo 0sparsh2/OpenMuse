@@ -13,7 +13,15 @@
 <body>
   <a class="skip-link" href="#main">Skip to main content</a>
   <div class="app">
-    <aside class="sidebar" aria-label="Primary">
+    <button class="top-btn menu-btn" id="menuBtn" type="button" aria-label="Open menu" aria-controls="drawer" aria-expanded="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <button class="top-btn bell-btn" id="bellBtn" type="button" aria-label="Notifications" aria-haspopup="dialog">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 16V11a6 6 0 1112 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 004 0"/></svg>
+      <span class="bell-dot" id="bellDot" hidden></span>
+    </button>
+    <div class="drawer-overlay" id="drawerOverlay" hidden></div>
+    <aside class="sidebar drawer" id="drawer" aria-label="Menu">
       <div class="brand">
         <!-- Original OpenMuse mark: orbit ring around a core. Not affiliated with any other product. -->
         <svg viewBox="0 0 32 32" role="img" aria-label="OpenMuse logo">
@@ -23,33 +31,45 @@
         </svg>
         <span class="brand-name">OpenMuse</span>
       </div>
-      <nav id="nav" class="nav" aria-label="Workspace sections"></nav>
+      <button class="drawer-new" id="drawerNew" type="button">+ New chat</button>
+      <input class="drawer-search" id="chatSearch" type="search" placeholder="Search chats" aria-label="Search chats">
+      <div class="drawer-chats" id="chatList" aria-label="Chats"></div>
+      <nav id="nav" class="nav" aria-label="Sections"></nav>
+      <label class="drawer-theme"><input type="checkbox" id="themeToggle"> Dark mode</label>
       <div class="conn-status" role="status" aria-label="Connection status">
         <span class="dot" id="connDot" aria-hidden="true"></span>
         <span id="connLabel">Connecting…</span>
       </div>
-      <form id="keyForm" aria-label="API key">
-        <label class="field">
-          <span class="sr-only">API key</span>
-          <input type="password" id="apiKey" placeholder="API key" autocomplete="off"
-                 aria-label="API key (stored only in this tab's session storage)">
-        </label>
-        <button class="btn secondary small" type="submit" style="width:100%">Set key</button>
-        <p class="muted" style="font-size:0.7rem">Kept in session storage only — never in local storage or logs.</p>
-      </form>
+<div class="user-box" id="userBox" hidden>
+        <div class="user-avatar" id="userInitial" aria-hidden="true"></div>
+        <div class="user-meta"><div class="user-name" id="userName"></div><div class="user-email" id="userEmail"></div></div>
+        <button class="btn secondary small" type="button" id="signOut">Sign out</button>
+      </div>
+      <details class="dev-key">
+        <summary>Developer API key</summary>
+        <form id="keyForm" aria-label="API key">
+          <label class="field">
+            <span class="sr-only">API key</span>
+            <input type="password" id="apiKey" placeholder="API key" autocomplete="off"
+                   aria-label="API key (stored only in this tab's session storage)">
+          </label>
+          <button class="btn secondary small" type="submit" style="width:100%">Use key</button>
+          <p class="muted" style="font-size:0.7rem">For scripts and local development. Kept in session storage only.</p>
+        </form>
+      </details>
     </aside>
     <main id="main" class="main" tabindex="-1"></main>
+    <nav class="tabbar" id="tabbar" aria-label="Primary"></nav>
   </div>
+  <div id="auth" class="auth" hidden></div>
   <script src="js/openmuse-api.js"></script>
   <script src="js/ui.js"></script>
   <script>
     document.getElementById("keyForm").addEventListener("submit", function (e) {
       e.preventDefault();
       var v = document.getElementById("apiKey").value.trim();
-      if (v) { window.OpenMuseAPI.store.apiKey = v; this.reset(); }
+      if (v) { window.OpenMuseAPI.store.apiKey = v; location.reload(); }
     });
-    var existing = window.OpenMuseAPI.store.apiKey;
-    if (existing) document.getElementById("apiKey").placeholder = "API key set ✓";
   </script>
 </body>
 </html>

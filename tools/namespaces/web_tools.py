@@ -47,4 +47,13 @@ def register(registry: ToolRegistry) -> None:
         default_timeout_ms=20_000,
         data_classes_accepted=["public"],
         execute=fetch,
+        display=lambda out: {"type": "link", "url": out.get("url", ""),
+                             "title": _page_title(out.get("text", "")) or out.get("url", ""),
+                             "status": out.get("status")},
     ))
+
+
+def _page_title(text: str) -> str:
+    import re as _re
+    m = _re.search(r"<title[^>]*>(.*?)</title>", text or "", _re.I | _re.S)
+    return _re.sub(r"\s+", " ", m.group(1)).strip()[:120] if m else ""

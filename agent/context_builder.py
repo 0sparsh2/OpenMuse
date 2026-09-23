@@ -50,8 +50,14 @@ class ContextBuilder:
         agent_name: str = "agent",
         timezone_name: str = "UTC",
         channel: str = "demo",
+        memory_provider=None,
     ):
         self.prompts_dir = prompts_dir
+        # Optional per-run memory: fn(run) -> (list[ChatMessage], WorkingMemory|None).
+        # Supplies profile files, MEMORY.md and recall pre-fetch for the run's user.
+        self.memory_provider = memory_provider
+        # Optional per-run IANA timezone (e.g. from the user's USER.md).
+        self.timezone_provider = None
         self.registry = registry
         self.user_files_dir = user_files_dir
         self.agent_name = agent_name
@@ -77,6 +83,11 @@ class ContextBuilder:
 
         # 6. identity/memory snippets (Phase 1: raw curated files, truncated)
         memory_blocks = self._identity_blocks()
+        if self.memory_provider is not None:
+            extra, provided_wm = self.memory_provider(run)
+            memory_blocks = memory_blocks + list(extra)
+            if working_memory is None:
+                working_memory = provided_wm
 
         # 9. tool schemas: always-loaded "tools" namespace + explicitly loaded ones
         namespaces = sorted({"tools"} | set(run.loaded_namespaces))
@@ -118,12 +129,20 @@ class ContextBuilder:
 
     # -- internals -----------------------------------------------------------
     def _render_system(self, run: Run, now: datetime) -> str:
+        tz_name = self.timezone_name
+        if self.timezone_provider is not None:
+            try:
+                from zoneinfo import ZoneInfo
+                tz_name = self.timezone_provider(run) or tz_name
+                now = now.astimezone(ZoneInfo(tz_name))
+            except Exception:
+                tz_name = self.timezone_name
         catalog = self.registry.catalog()
         catalog_text = "\n".join(f"- {c['name']}: {c['description']}" for c in catalog)
         text = self._system_template
         text = text.replace("{{agent_name}}", self.agent_name)
         text = text.replace("{{current_time}}", now.isoformat())
-        text = text.replace("{{timezone}}", self.timezone_name)
+        text = text.replace("{{timezone}}", tz_name)
         text = text.replace("{{trigger}}", "user_message")
         text = text.replace("{{namespace_catalog}}", catalog_text or "(none)")
         text = text.replace("{{remaining_budget}}", run.remaining_budget_text)

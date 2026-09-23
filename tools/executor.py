@@ -30,7 +30,7 @@ from typing import Any, Optional
 from jsonschema import ValidationError, validate
 
 from observability.events import EventLog
-from tools.redaction import redact_text
+from tools.redaction import looks_like_secret, redact_text
 from tools.registry import ToolDefinition, ToolRegistry, UnknownToolError
 
 MODEL_VIEW_CHAR_LIMIT = 8000
@@ -124,6 +124,9 @@ class ExecutionContext:
     # Phase 3: child agents get an isolated scratch memory root so their
     # memory.* tools never touch the parent's `.agent-memory`.
     memory_root: Optional[str] = None
+    # The signed-in user this call runs for (per-user browser profiles,
+    # schedules, domains). Empty for legacy single-user deployments.
+    user_id: str = ""
 
 
 def _utcnow() -> str:
@@ -214,12 +217,19 @@ def _execute_one(ctx: ExecutionContext, call: PrevalidatedCall) -> dict:
         "postconditions": [f"side_effect:{call.tool.side_effect}"],
         "metrics": {"latency_ms": latency_ms},
     }
-    ctx.event_log.append(
-        "tool.result",
-        {"call_id": call.call_id, "tool": call.tool_name, "status": "succeeded",
-         "latency_ms": latency_ms, "redactions": redactions,
-         "grant_id": ctx.approval_grant_id or None},
-    )
+    payload = {"call_id": call.call_id, "tool": call.tool_name, "status": "succeeded",
+               "latency_ms": latency_ms, "redactions": redactions,
+               "grant_id": ctx.approval_grant_id or None}
+    display_fn = getattr(call.tool, "display", None)
+    if display_fn is not None:
+        try:
+            card = display_fn(output)
+            blob = json.dumps(card, ensure_ascii=False, default=str) if card else ""
+            if card and len(blob) <= 2048 and not looks_like_secret(blob):
+                payload["display"] = card
+        except Exception:
+            pass  # a card is a nicety; never fail the call over it
+    ctx.event_log.append("tool.result", payload)
     return envelope
 
 

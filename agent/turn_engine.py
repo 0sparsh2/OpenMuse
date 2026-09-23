@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Optional
 
 from gateway.protocol import Block, ChatMessage, ProviderError
 from gateway.router import Router
@@ -41,6 +42,7 @@ from .models import (
     FAILED,
     FINALIZING,
     INGESTING_RESULTS,
+    PAUSED,
     RECEIVED,
     WAITING_FOR_APPROVAL,
     Run,
@@ -56,6 +58,8 @@ class Deps:
     decider: ApprovalDecider
     context_builder: ContextBuilder
     workspace_root: str
+    memory_root: Optional[str] = None  # per-user memory store for memory.* tools
+    user_id: str = ""                  # the run's user, passed to tool contexts
 
 
 def _transition(run: Run, log: EventLog, new_state: str) -> None:
@@ -115,12 +119,17 @@ def advance_run(run: Run, deps: Deps, log: EventLog) -> Run:
             return run
         if run.wall_elapsed_s > run.budgets.max_wall_seconds:
             return _fail(run, log, "WALL_BUDGET", "Run exceeded its wall-clock budget.")
+        # Pause only at a step boundary — never mid-tool — so nothing is half done.
+        if run.pause_requested and run.state in (RECEIVED, INGESTING_RESULTS):
+            log.append("run.paused", {"step": run.step})
+            _transition(run, log, PAUSED)
+            return run
 
         # -- model step ----------------------------------------------------
         # WAITING_FOR_APPROVAL re-entry means parked approvals were resolved
         # out of band; rebuild context and let the model re-propose. Any
         # still-valid bound grants are picked up by policy without re-asking.
-        if run.state in (RECEIVED, INGESTING_RESULTS, WAITING_FOR_APPROVAL):
+        if run.state in (RECEIVED, INGESTING_RESULTS, WAITING_FOR_APPROVAL, PAUSED):
             if run.model_calls_used >= run.budgets.max_model_calls:
                 return _fail(run, log, "MAX_MODEL_CALLS", "Run exceeded its model-call budget.")
             _transition(run, log, ASSEMBLING_CONTEXT)
@@ -279,6 +288,8 @@ def advance_run(run: Run, deps: Deps, log: EventLog) -> Run:
                 run_id=run.run_id, tenant_id=run.tenant_id,
                 workspace_root=deps.workspace_root, event_log=log,
                 approval_grant_id=grant.id if grant else "",
+                memory_root=deps.memory_root,
+                user_id=deps.user_id or run.user_id,
             )
             if grant:
                 deps.approvals.consume(grant)

@@ -14,9 +14,23 @@
 (function () {
   "use strict";
 
+  // Bearer credential: a per-user session token from sign-in (kept in
+  // localStorage when "keep me signed in", else sessionStorage), or a
+  // developer API key pasted in the sidebar (session only).
+  const safe = (fn) => { try { return fn(); } catch (e) { return ""; } };
   const store = {
-    get apiKey() { return sessionStorage.getItem("om.apiKey") || ""; },
-    set apiKey(v) { sessionStorage.setItem("om.apiKey", v); },
+    get apiKey() {
+      return safe(() => sessionStorage.getItem("om.apiKey")) || safe(() => localStorage.getItem("om.token")) || "";
+    },
+    set apiKey(v) { safe(() => sessionStorage.setItem("om.apiKey", v)); },
+    setToken(token, remember) {
+      safe(() => sessionStorage.setItem("om.apiKey", token));
+      if (remember) safe(() => localStorage.setItem("om.token", token));
+    },
+    clear() {
+      safe(() => sessionStorage.removeItem("om.apiKey"));
+      safe(() => localStorage.removeItem("om.token"));
+    },
     get base() { return ""; }, // same-origin; serve_ui.py proxies /v1/*
   };
 
@@ -56,6 +70,86 @@
     return { idempotencyKey: key, messageId: body.message_id, runId: body.run_id,
              state: body.status, streamUrl: body.stream_url };
   }
+
+  /* -- chat threads (server-side list, rename, archive, transcript) --- */
+  async function chats(archived) { return req("GET", "/v1/chats" + (archived ? "?archived=1" : "")); }
+  async function updateChat(chatId, patch) { return req("PATCH", "/v1/chats/" + encodeURIComponent(chatId), { body: patch }); }
+  async function chatMessages(chatId) { return req("GET", "/v1/chats/" + encodeURIComponent(chatId) + "/messages"); }
+
+  /* -- schedules, notifications, task control, activity -------------- */
+  const schedules = {
+    list: () => req("GET", "/v1/schedules"),
+    create: (s) => req("POST", "/v1/schedules", { body: s }),
+    update: (id, patch) => req("PATCH", "/v1/schedules/" + encodeURIComponent(id), { body: patch }),
+    remove: (id) => req("DELETE", "/v1/schedules/" + encodeURIComponent(id)),
+    runNow: (id) => req("POST", "/v1/schedules/" + encodeURIComponent(id) + "/run", { body: {} }),
+  };
+  const notifications = {
+    list: () => req("GET", "/v1/notifications"),
+    read: (id) => req("POST", "/v1/notifications/" + encodeURIComponent(id) + "/read", { body: {} }),
+    readAll: () => req("POST", "/v1/notifications/read-all", { body: {} }),
+    // Live stream: reconnects forever (server closes each connection after ~25s).
+    async stream(onNote, signal) {
+      for (;;) {
+        if (signal && signal.aborted) return;
+        try {
+          const h = { "Accept": "text/event-stream" };
+          if (store.apiKey) h["Authorization"] = "Bearer " + store.apiKey;
+          const resp = await fetch("/v1/notifications/stream", { headers: h, signal });
+          if (resp.status === 401) return;
+          const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = "";
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            let i;
+            while ((i = buf.indexOf("\n\n")) >= 0) {
+              const block = buf.slice(0, i); buf = buf.slice(i + 2);
+              const data = block.split("\n").filter((l) => l.startsWith("data:")).map((l) => l.slice(5)).join("");
+              if (data) { try { onNote(JSON.parse(data)); } catch (e) { /* skip */ } }
+            }
+          }
+        } catch (e) { if (signal && signal.aborted) return; }
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    },
+  };
+  const runs = {
+    pause: (id) => req("POST", "/v1/runs/" + encodeURIComponent(id) + "/pause", { body: {} }),
+    resume: (id) => req("POST", "/v1/runs/" + encodeURIComponent(id) + "/resume", { body: {} }),
+    retry: (id) => req("POST", "/v1/runs/" + encodeURIComponent(id) + "/retry", { body: {} }),
+    receipt: (id) => req("GET", "/v1/runs/" + encodeURIComponent(id) + "/receipt"),
+  };
+  const activity = () => req("GET", "/v1/activity");
+
+  /* -- accounts ------------------------------------------------------ */
+  async function signup(email, password, name) {
+    let timezone = "";
+    try { timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) { /* ignore */ }
+    return req("POST", "/v1/auth/signup", { body: { email, password, name, timezone } });
+  }
+  async function login(email, password) {
+    return req("POST", "/v1/auth/login", { body: { email, password } });
+  }
+  async function logout() { try { await req("POST", "/v1/auth/logout", { body: {} }); } catch (e) { /* already gone */ } }
+  async function me() { return req("GET", "/v1/auth/me"); }
+
+  /* -- memory (the signed-in user's own store) ------------------------ */
+  const memory = {
+    overview: () => req("GET", "/v1/memory"),
+    recall: (query, top_k) => req("POST", "/v1/memory/recall", { body: { query, top_k: top_k || 8 } }),
+    records: () => req("GET", "/v1/memory/records"),
+    journal: () => req("GET", "/v1/memory/journal"),
+    people: () => req("GET", "/v1/memory/people"),
+    person: (id) => req("GET", "/v1/memory/people/" + encodeURIComponent(id)),
+    forget: (query, confirm) => req("POST", "/v1/memory/forget", { body: { query, confirm: !!confirm } }),
+    profile: () => req("GET", "/v1/memory/profile"),
+    saveProfile: (fname, text) => req("PUT", "/v1/memory/profile/" + fname, { body: { text } }),
+    documents: () => req("GET", "/v1/memory/documents"),
+    addDocument: (doc) => req("POST", "/v1/memory/documents", { body: doc }),
+    deleteDocument: (id) => req("DELETE", "/v1/memory/documents/" + encodeURIComponent(id)),
+    summaries: () => req("GET", "/v1/memory/summaries"),
+  };
 
   /* -- live browser view --------------------------------------------- */
   async function browserSession(sessionId) {
@@ -286,6 +380,8 @@
     createSession, sendMessage, getRun, cancelRun,
     streamRun, streamRunFetch,
     browserSession, browserFrameURL, browserInput,
+    signup, login, logout, me, memory, chats, updateChat, chatMessages,
+    schedules, notifications, runs, activity,
     getApproval, decideApproval, approvalCard, deviceAuthenticate, HIGH_RISK,
     uploadArtifact, downloadArtifact,
     local, queue,

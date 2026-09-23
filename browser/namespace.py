@@ -144,7 +144,11 @@ def register(registry: ToolRegistry, operator: BrowserOperator,
         "browser", "Operate a managed browser session (Phase 4).")
 
     def start_session(ctx, args):
-        session_id = operator.start_session(ctx.tenant_id)
+        if getattr(operator, "per_user_profiles", False):
+            session_id = operator.start_session(ctx.tenant_id,
+                                                user_id=getattr(ctx, "user_id", "") or "")
+        else:
+            session_id = operator.start_session(ctx.tenant_id)
         ctx.event_log.append("browser.session_started",
                              {"session_id": session_id,
                               "tenant_id": ctx.tenant_id})

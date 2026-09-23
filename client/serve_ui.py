@@ -36,32 +36,21 @@ MIME = {
 }
 
 
-class UiContext:
-    """Services backing /v1/local/*. Constructed once per server."""
+class UserScope:
+    """One user's local surfaces (goals / feed / ideas / library index)."""
 
-    def __init__(self, *, domains_root: str, scheduler=None, memory=None,
-                 connectors=None, tenant_id: str = "tenant_demo",
-                 production_services=None, api_base: str = ""):
-        self.domains_root = domains_root
-        self.scheduler = scheduler
-        self.memory = memory
-        self.connectors = connectors
-        self.tenant_id = tenant_id
-        self.production_services = production_services
-        self.api_base = api_base
-        os.makedirs(domains_root, exist_ok=True)
+    def __init__(self, root: str):
         from domains import GoalStore, FeedStore, IdeaStore
-        self.goals = GoalStore(os.path.join(domains_root, "domains"))
-        self.feed = FeedStore(os.path.join(domains_root, "domains"))
-        self.ideas = IdeaStore(os.path.join(domains_root, "domains"))
-        self._artifacts_path = os.path.join(domains_root, "artifacts_index.json")
+        os.makedirs(root, exist_ok=True)
+        self.goals = GoalStore(os.path.join(root, "domains"))
+        self.feed = FeedStore(os.path.join(root, "domains"))
+        self.ideas = IdeaStore(os.path.join(root, "domains"))
+        self._artifacts_path = os.path.join(root, "artifacts_index.json")
         self._lock = threading.Lock()
 
-    # -- artifact index (library tab lists uploads made through this client)
     def record_artifact(self, meta: dict) -> None:
         with self._lock:
-            items = self._read_artifacts()
-            items = [a for a in items
+            items = [a for a in self._read_artifacts()
                      if a.get("artifact_id") != meta.get("artifact_id")]
             items.append(meta)
             tmp = self._artifacts_path + ".tmp"
@@ -78,6 +67,68 @@ class UiContext:
             with open(self._artifacts_path, "r", encoding="utf-8") as f:
                 return json.load(f)
         return []
+
+
+class UiContext:
+    """Services backing /v1/local/*. Constructed once per server.
+
+    require_auth=True (the CLI default): every /v1/local/* call must carry a
+    valid bearer token, verified against the API (/v1/auth/me, cached 60s),
+    and is served from that user's own UserScope. require_auth=False keeps
+    the legacy single shared scope for the offline demo (--demo-local).
+    """
+
+    def __init__(self, *, domains_root: str, scheduler=None, memory=None,
+                 connectors=None, tenant_id: str = "tenant_demo",
+                 production_services=None, api_base: str = "",
+                 require_auth: bool = False):
+        self.domains_root = domains_root
+        self.scheduler = scheduler
+        self.memory = memory
+        self.connectors = connectors
+        self.tenant_id = tenant_id
+        self.production_services = production_services
+        self.api_base = api_base
+        self.require_auth = require_auth
+        os.makedirs(domains_root, exist_ok=True)
+        self.shared = UserScope(domains_root)
+        # legacy attribute names used by tests/demo
+        self.goals, self.feed, self.ideas = self.shared.goals, self.shared.feed, self.shared.ideas
+        self._scopes: dict[str, UserScope] = {}
+        self._token_cache: dict[str, tuple[float, str]] = {}
+        self._lock = threading.Lock()
+
+    def scope_for(self, user_id: str) -> "UserScope":
+        safe = re.sub(r"[^A-Za-z0-9_-]", "_", user_id)[:80]
+        with self._lock:
+            if safe not in self._scopes:
+                self._scopes[safe] = UserScope(os.path.join(self.domains_root, "users", safe))
+            return self._scopes[safe]
+
+    def user_for_token(self, authorization: str) -> str | None:
+        """Resolve a bearer token to a user id via the API (cached 60s)."""
+        if not authorization:
+            return None
+        now = time.time()
+        hit = self._token_cache.get(authorization)
+        if hit and now - hit[0] < 60:
+            return hit[1]
+        req = urllib.request.Request(self.api_base + "/v1/auth/me",
+                                     headers={"Authorization": authorization})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                uid = json.loads(resp.read().decode("utf-8"))["user"]["user_id"]
+        except Exception:
+            return None
+        self._token_cache[authorization] = (now, uid)
+        return uid
+
+    # -- artifact index: legacy shared scope (demo) -------------------------
+    def record_artifact(self, meta: dict) -> None:
+        self.shared.record_artifact(meta)
+
+    def list_artifacts(self) -> list[dict]:
+        return self.shared.list_artifacts()
 
 
 def _json_body(handler) -> dict:
@@ -124,6 +175,12 @@ class UiHandler(BaseHTTPRequestHandler):
         self._dispatch()
 
     def do_DELETE(self):
+        self._dispatch()
+
+    def do_PUT(self):
+        self._dispatch()
+
+    def do_PATCH(self):
         self._dispatch()
 
     def _dispatch(self):
@@ -197,7 +254,10 @@ class UiHandler(BaseHTTPRequestHandler):
                 if self.command == "POST" and self.path == "/v1/artifacts" \
                         and resp.status in (200, 201):
                     try:
-                        self.ctx.record_artifact(json.loads(body.decode("utf-8")))
+                        meta = json.loads(body.decode("utf-8"))
+                        uid = (self.ctx.user_for_token(self.headers.get("Authorization", ""))
+                               if self.ctx.require_auth else None)
+                        (self.ctx.scope_for(uid) if uid else self.ctx.shared).record_artifact(meta)
                     except Exception:
                         pass
                 self.end_headers()
@@ -257,17 +317,30 @@ window and finish connecting in OpenMuse.</p></main></body></html>""")
         return self._send_error(405, "METHOD_NOT_ALLOWED", "bad method")
 
     # -- /v1/local/* ------------------------------------------------------------
+    def _scope(self):
+        """The caller's UserScope, or None (401 already sent)."""
+        if not self.ctx.require_auth:
+            return self.ctx.shared
+        uid = self.ctx.user_for_token(self.headers.get("Authorization", ""))
+        if uid is None:
+            self._send_error(401, "UNAUTHORIZED", "sign in required")
+            return None
+        return self.ctx.scope_for(uid)
+
     def _local(self, sub: str):
         method = self.command
+        scope = self._scope()
+        if scope is None:
+            return
         body = _json_body(self) if method in ("POST", "PUT", "PATCH") else {}
         ctx = self.ctx
         tid = ctx.tenant_id
 
         # goals ------------------------------------------------------------
         if sub == "/goals" and method == "GET":
-            return self._send_json(200, [g.to_dict() for g in ctx.goals.list()])
+            return self._send_json(200, [g.to_dict() for g in scope.goals.list()])
         if sub == "/goals" and method == "POST":
-            g = ctx.goals.create(title=body.get("title", ""),
+            g = scope.goals.create(title=body.get("title", ""),
                                  description=body.get("description", ""),
                                  category=body.get("category", ""),
                                  target_date=body.get("target_date", ""))
@@ -275,23 +348,23 @@ window and finish connecting in OpenMuse.</p></main></body></html>""")
         m = re.match(r"^/goals/([^/]+)/activity$", sub)
         if m and method == "POST":
             from dataclasses import asdict
-            e = ctx.goals.log_activity(m.group(1), body.get("text", ""),
+            e = scope.goals.log_activity(m.group(1), body.get("text", ""),
                                       source=body.get("source", "manual"))
             return self._send_json(201, asdict(e))
         m = re.match(r"^/goals/([^/]+)/status$", sub)
         if m and method == "POST":
-            return self._send_json(200, ctx.goals.set_status(
+            return self._send_json(200, scope.goals.set_status(
                 m.group(1), body.get("status", "")).to_dict())
         m = re.match(r"^/goals/([^/]+)$", sub)
         if m and method == "DELETE":
-            ctx.goals.delete(m.group(1))
+            scope.goals.delete(m.group(1))
             return self._send_json(200, {"deleted": True})
 
         # feed -------------------------------------------------------------
         if sub == "/feed" and method == "GET":
-            return self._send_json(200, [i.to_dict() for i in ctx.feed.list()])
+            return self._send_json(200, [i.to_dict() for i in scope.feed.list()])
         if sub == "/feed" and method == "POST":
-            item = ctx.feed.publish(
+            item = scope.feed.publish(
                 title=body.get("title", ""), body=body.get("body", ""),
                 source_type=body.get("source_type", "manual"),
                 source_id=body.get("source_id", ""),
@@ -299,41 +372,41 @@ window and finish connecting in OpenMuse.</p></main></body></html>""")
             return self._send_json(201, item.to_dict() if item else None)
         m = re.match(r"^/feed/([^/]+)/dismiss$", sub)
         if m and method == "POST":
-            return self._send_json(200, ctx.feed.dismiss(m.group(1)).to_dict())
+            return self._send_json(200, scope.feed.dismiss(m.group(1)).to_dict())
         if sub == "/feed/mute" and method == "POST":
-            ctx.feed.mute_source(body.get("source_id", ""))
+            scope.feed.mute_source(body.get("source_id", ""))
             return self._send_json(200, {"muted": True})
         if sub == "/feed/unmute" and method == "POST":
-            ctx.feed.unmute_source(body.get("source_id", ""))
+            scope.feed.unmute_source(body.get("source_id", ""))
             return self._send_json(200, {"muted": False})
 
         # ideas ------------------------------------------------------------
         if sub == "/ideas" and method == "GET":
-            return self._send_json(200, [i.to_dict() for i in ctx.ideas.list()])
+            return self._send_json(200, [i.to_dict() for i in scope.ideas.list()])
         if sub == "/ideas" and method == "POST":
-            return self._send_json(201, ctx.ideas.capture(
+            return self._send_json(201, scope.ideas.capture(
                 body.get("text", ""), title=body.get("title", "")).to_dict())
         m = re.match(r"^/ideas/([^/]+)/promote$", sub)
         if m and method == "POST":
-            idea = ctx.ideas.get(m.group(1))
-            goal = ctx.goals.create(
+            idea = scope.ideas.get(m.group(1))
+            goal = scope.goals.create(
                 title=idea.title or idea.text[:60],
                 description=idea.text, category="from-idea")
-            ctx.goals.log_activity(
+            scope.goals.log_activity(
                 goal.id, f"Promoted from idea {idea.id}", source="manual")
             return self._send_json(200, {
-                "idea": ctx.ideas.promote(m.group(1), goal).to_dict(),
+                "idea": scope.ideas.promote(m.group(1), goal).to_dict(),
                 "goal": goal.to_dict()})
         m = re.match(r"^/ideas/([^/]+)/archive$", sub)
         if m and method == "POST":
-            return self._send_json(200, ctx.ideas.archive(m.group(1)).to_dict())
+            return self._send_json(200, scope.ideas.archive(m.group(1)).to_dict())
 
         # artifacts (library index) ----------------------------------------
         if sub == "/artifacts" and method == "GET":
-            return self._send_json(200, ctx.list_artifacts())
+            return self._send_json(200, scope.list_artifacts())
 
-        # memory -----------------------------------------------------------
-        if ctx.memory is not None:
+        # memory (demo mode only; signed-in users use the API's /v1/memory)
+        if ctx.memory is not None and not ctx.require_auth:
             if sub == "/memory/stats" and method == "GET":
                 return self._send_json(200, ctx.memory.stats())
             if sub == "/memory/recall" and method == "POST":
@@ -496,7 +569,7 @@ def serve_ui(api_base: str, host: str = "127.0.0.1", port: int = 0,
     if "domains_root" not in ctx_kwargs:
         import tempfile
         ctx_kwargs["domains_root"] = tempfile.mkdtemp(prefix="openmuse-ui-")
-    if ctx_kwargs.get("memory") is None:
+    if ctx_kwargs.get("memory") is None and not ctx_kwargs.get("require_auth"):
         from memory.layered import LayeredMemory
         ctx_kwargs["memory"] = LayeredMemory(
             os.path.join(ctx_kwargs["domains_root"], "memory"))
@@ -517,11 +590,14 @@ def main() -> int:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--data", default="",
                     help="data root for domains (default: temp dir)")
+    ap.add_argument("--demo-local", action="store_true",
+                    help="serve /v1/local/* without sign-in from one shared store "
+                         "(offline demo only; never for multi-user use)")
     args = ap.parse_args()
     import tempfile
     data = args.data or tempfile.mkdtemp(prefix="openmuse-ui-")
     server = serve_ui(args.api, host=args.host, port=args.port,
-                      domains_root=data)
+                      domains_root=data, require_auth=not args.demo_local)
     port = server.server_address[1]
     print(f"OpenMuse client at http://{args.host}:{port} "
           f"(API: {args.api}, data: {data})")

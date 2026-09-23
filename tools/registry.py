@@ -29,6 +29,9 @@ class ToolDefinition:
     execute: Callable[..., Any] | None = None  # (ctx, input) -> output dict
     # Optional: extra fields an approval must bind to (e.g. commit origin/amount).
     approval_bind_fields: Callable[[dict], dict] | None = None
+    # Optional: compact, secret-free card data for clients, fn(output) -> dict
+    # (e.g. {"type": "email", "subject": ...}); sent with the tool.result event.
+    display: Callable[[dict], dict] | None = None
 
 
 class UnknownToolError(KeyError):

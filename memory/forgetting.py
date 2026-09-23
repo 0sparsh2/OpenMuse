@@ -171,6 +171,9 @@ class ForgettingService:
         elif kind == "person":
             if self.m.people.remove_person(tid):
                 removed.append({"kind": "person", "id": tid, "how": "deleted"})
+            stale = [i for i in list(self.m.vectors._entries) if i.startswith(f"person:{tid}")]
+            if stale:
+                self.m.vectors.remove(stale)
         # vectors + derivation edges always go, regardless of mode
         self.m.vectors.remove([f"memory:{tid}", f"journal:{tid}", f"person:{tid}"])
         self.m.derivation.remove_node(kind, tid)

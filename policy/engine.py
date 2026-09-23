@@ -70,7 +70,11 @@ class PolicyDecision:
 
 
 class PolicyEngine:
-    def __init__(self, capabilities_path: str):
+    def __init__(self, capabilities_path: str, *, ask_for_external_writes: bool = False):
+        # False (blueprint default): R3 runs only with an approval granted out
+        # of band. True (interactive app): R3 is ASKed inline — one bound,
+        # single-use approval per exact call; nothing auto-approves it.
+        self.ask_for_external_writes = ask_for_external_writes
         with open(capabilities_path, "r", encoding="utf-8") as fh:
             cfg = yaml.safe_load(fh)
         self._tools: dict = (cfg or {}).get("tools", {})
@@ -159,7 +163,16 @@ class PolicyEngine:
                 ASK, "APPROVAL_REQUIRED", approval_template=template,
                 safe_explanation=f"{inp.tool_name} needs your approval before it runs.")
 
-        # 5. External communication and above need an explicit bound approval.
+        # 5. External communication (R3: send an email, create an event) asks the
+        #    user every time via a single-use approval bound to these exact
+        #    arguments. (No decider auto-approves R3; AutonomousDecider holds it.)
+        if inp.risk == "R3" and self.ask_for_external_writes:
+            return PolicyDecision(
+                ASK, "APPROVAL_REQUIRED", approval_template="external_write_v1",
+                safe_explanation=f"{inp.tool_name} acts outside OpenMuse and needs your approval.")
+
+        # 6. Financial / legal (R4) and above need a valid bound approval that
+        #    was already granted (strong-auth path above); never asked inline.
         if inp.risk in ("R3", "R4"):
             return PolicyDecision(DENY, "APPROVAL_REQUIRED_HIGH_RISK",
                                   f"{inp.tool_name} is high-risk and needs a "

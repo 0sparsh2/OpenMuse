@@ -26,17 +26,19 @@ FINALIZING = "FINALIZING"
 COMPLETED = "COMPLETED"
 FAILED = "FAILED"
 CANCELLED = "CANCELLED"
+PAUSED = "PAUSED"            # user asked to pause; resumes at the same step boundary
 
 TERMINAL = frozenset({COMPLETED, FAILED, CANCELLED})
 
 _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
-    RECEIVED: frozenset({ASSEMBLING_CONTEXT, CANCELLED}),
+    RECEIVED: frozenset({ASSEMBLING_CONTEXT, CANCELLED, PAUSED}),
     ASSEMBLING_CONTEXT: frozenset({AWAITING_MODEL, FAILED, CANCELLED}),
     AWAITING_MODEL: frozenset({EVALUATING_ACTIONS, FINALIZING, FAILED, CANCELLED}),
     EVALUATING_ACTIONS: frozenset({WAITING_FOR_APPROVAL, EXECUTING_TOOLS, INGESTING_RESULTS, FAILED, CANCELLED}),
     WAITING_FOR_APPROVAL: frozenset({ASSEMBLING_CONTEXT, EVALUATING_ACTIONS, INGESTING_RESULTS, FAILED, CANCELLED}),
+    PAUSED: frozenset({ASSEMBLING_CONTEXT, FAILED, CANCELLED}),
     EXECUTING_TOOLS: frozenset({INGESTING_RESULTS, FAILED, CANCELLED}),
-    INGESTING_RESULTS: frozenset({ASSEMBLING_CONTEXT, FAILED, CANCELLED}),
+    INGESTING_RESULTS: frozenset({ASSEMBLING_CONTEXT, FAILED, CANCELLED, PAUSED}),
     FINALIZING: frozenset({COMPLETED, FAILED, CANCELLED}),
     COMPLETED: frozenset(),
     FAILED: frozenset(),
@@ -69,6 +71,7 @@ class Run:
     tool_calls_used: int = 0
     step: int = 0
     cancel_requested: bool = False
+    pause_requested: bool = False
     failure_code: str = ""
     failure_message: str = ""
     final_text: str = ""

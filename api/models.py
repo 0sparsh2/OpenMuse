@@ -28,6 +28,7 @@ class ApiKeyRecord:
     rate_limit_per_min: int = 60
     created_at: float = field(default_factory=time.time)
     revoked: bool = False
+    user_id: str = ""               # set for per-user session tokens
 
     def public_view(self) -> dict:
         return {

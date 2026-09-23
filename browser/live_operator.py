@@ -101,9 +101,10 @@ def _sha(value: str) -> str:
 
 
 class _Session:
-    def __init__(self, session_id: str, tenant_id: str):
+    def __init__(self, session_id: str, tenant_id: str, user_id: str = ""):
         self.session_id = session_id
         self.tenant_id = tenant_id
+        self.user_id = user_id
         self.context = None
         self.page = None
         self.gen = 0
@@ -127,13 +128,16 @@ class _Session:
 
 
 class LiveBrowserOperator(BrowserOperator):
+    # Each user gets their own cookie/login profile; sessions are owned.
+    per_user_profiles = True
+
     def __init__(self, profile_root: str, *, headless: bool = True,
                  start_url: str = "about:blank"):
         self.profile_root = profile_root
         self.headless = headless
         self.start_url = start_url
         os.makedirs(profile_root, exist_ok=True)
-        self._storage_path = os.path.join(profile_root, "storage_state.json")
+        self._storage_path = os.path.join(profile_root, "storage_state.json")  # legacy / no user
         self._sessions: dict[str, _Session] = {}
         self._q: queue.Queue = queue.Queue()
         self._pw = None
@@ -300,8 +304,9 @@ class LiveBrowserOperator(BrowserOperator):
 
     def _close(self, s: _Session) -> None:
         try:
-            s.context.storage_state(path=self._storage_path)
-            os.chmod(self._storage_path, 0o600)
+            path = self._profile_path(s.user_id)
+            s.context.storage_state(path=path)
+            os.chmod(path, 0o600)
         except Exception:
             pass
         try:
@@ -313,14 +318,23 @@ class LiveBrowserOperator(BrowserOperator):
     # ------------------------------------------------------------------
     # seam: lifecycle
     # ------------------------------------------------------------------
-    def start_session(self, tenant_id: str) -> str:
+    def _profile_path(self, user_id: str) -> str:
+        if not user_id:
+            return self._storage_path
+        safe = re.sub(r"[^A-Za-z0-9_-]", "_", user_id)[:80]
+        d = os.path.join(self.profile_root, "users", safe)
+        os.makedirs(d, exist_ok=True)
+        return os.path.join(d, "storage_state.json")
+
+    def start_session(self, tenant_id: str, user_id: str = "") -> str:
         def run():
             self._ensure_browser()
             sid = "br_" + uuid.uuid4().hex[:12]
-            s = _Session(sid, tenant_id)
+            s = _Session(sid, tenant_id, user_id)
             kw = {"viewport": VIEWPORT, "locale": "en-US"}
-            if os.path.exists(self._storage_path):
-                kw["storage_state"] = self._storage_path  # persistent profile
+            profile = self._profile_path(user_id)
+            if os.path.exists(profile):
+                kw["storage_state"] = profile  # this user's persistent profile
             s.context = self._browser.new_context(**kw)
             s.page = s.context.new_page()
             s.context.on("page", lambda pg, s=s: self._adopt_page(s, pg))
@@ -608,7 +622,8 @@ class LiveBrowserOperator(BrowserOperator):
         if s is None:
             return None
         return {
-            "session_id": s.session_id, "state": s.state, "challenge": s.challenge,
+            "session_id": s.session_id, "user_id": s.user_id,
+            "state": s.state, "challenge": s.challenge,
             "url": s.url, "title": s.title, "frame_seq": s.frame_seq,
             "viewport": dict(VIEWPORT), "cursor": s.cursor,
             "last_action": s.log[-1] if s.log else None,

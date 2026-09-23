@@ -132,11 +132,14 @@ class OpenAICompatProvider(Provider):
         base_url: str | None = None,
         model: str | None = None,
         timeout_s: int = 120,
+        extra_body: dict | None = None,
     ):
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self.base_url = (base_url or os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
         self.model = model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
         self.timeout_s = timeout_s
+        # vendor-specific request fields, e.g. {"chat_template_kwargs": {"enable_thinking": False}}
+        self.extra_body = dict(extra_body or {})
 
     def complete(self, request: ModelRequest) -> ModelResponse:
         if not self.api_key:
@@ -147,6 +150,7 @@ class OpenAICompatProvider(Provider):
             "messages": [_to_openai_message(m) for m in request.messages],
             "max_tokens": request.max_output_tokens,
             "temperature": request.temperature,
+            **self.extra_body,
         }
         if request.tools:
             payload["tools"] = [

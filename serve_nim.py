@@ -38,10 +38,10 @@ fallback = OpenAICompatProvider(
 )
 
 
-def _complete_with_fallback(request):
+def _complete_with_fallback(request, primary=None):
     from gateway.protocol import ProviderError
     last = None
-    for prov, attempts in ((provider, 4), (fallback, 3)):
+    for prov, attempts in ((primary or provider, 4), (fallback, 3)):
         for attempt in range(attempts):
             try:
                 resp = prov.complete(request)
@@ -66,8 +66,46 @@ def _respond(request, history):
     return resp
 
 
+# Background memory jobs don't need chain-of-thought: with thinking off the
+# extractor is ~2x faster and never burns its token budget before the JSON.
+memory_provider = OpenAICompatProvider(
+    api_key=os.environ["NVIDIA_NIM_API_KEY"],
+    base_url=os.environ.get("NVIDIA_NIM_API_BASE", "https://integrate.api.nvidia.com/v1"),
+    model=os.environ.get("NVIDIA_MEMORY_MODEL", os.environ["NVIDIA_MODEL"]),
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+)
+
+
+def _llm_json(system: str, user: str) -> str:
+    """Background memory jobs (extract / consolidate / compact): one plain
+    completion, no tools, deterministic-ish, through the same retry/fallback."""
+    from gateway.protocol import Block, ChatMessage, ModelRequest
+    req = ModelRequest(
+        request_id=f"memory:{time.time_ns()}", model_class="planner",
+        messages=[ChatMessage(role="system", blocks=[Block(kind="text", text=system)]),
+                  ChatMessage(role="user", blocks=[Block(kind="text", text=user)])],
+        tools=[], max_output_tokens=4000, temperature=0.0, metadata=None)
+    return _complete_with_fallback(req, primary=memory_provider).text
+
+
 data_root = os.environ.get("OPENMUSE_DATA", os.path.join(ROOT, ".data", "api"))
 os.makedirs(data_root, exist_ok=True)
+from memory.service import MemoryService
+
+
+def _connectors():
+    """Composio-backed app connectors when COMPOSIO_API_KEY is set, else None."""
+    if not os.environ.get("COMPOSIO_API_KEY"):
+        return None
+    from connectors.composio_bridge import ComposioBridge
+    return ComposioBridge(os.environ["COMPOSIO_API_KEY"],
+                          cache_dir=os.path.join(ROOT, ".data", "cache"),
+                          public_url=os.environ.get("OPENMUSE_PUBLIC_URL", "http://127.0.0.1:8080"),
+                          log=lambda m: print(m, flush=True))
+
+state_root = os.path.join(ROOT, ".data")
+memory_service = MemoryService(state_root, prompts_dir=os.path.join(ROOT, "prompts"),
+                               llm=_llm_json, log=lambda m: print(m, flush=True))
 browser = LiveBrowserOperator(os.path.join(ROOT, ".data", "browser-profile"),
                               headless=os.environ.get("OPENMUSE_HEADFUL") != "1")
 backend = ApiBackend(
@@ -76,7 +114,13 @@ backend = ApiBackend(
     browser_operator=browser,
     # browsing takes many steps; each approval-gated step costs a re-proposal
     run_budgets=RunBudgets(max_model_calls=60, max_tool_calls=80, max_wall_seconds=1800),
+    memory_service=memory_service,              # per-user layered memory
+    accounts_root=os.path.join(state_root, "accounts"),  # sign up / sign in
+    db_path=os.path.join(state_root, "openmuse.db"),     # chats/runs/events/approvals survive restarts
+    scheduling_root=os.path.join(state_root, "users"),   # per-user schedules + runner
+    connectors=_connectors(),                             # Gmail / Calendar via Composio
 )
+backend.schedules.start()
 # Autonomy (on by default; OPENMUSE_AUTONOMY=off restores ask-for-everything):
 # reversible local steps such as browsing run on their own, while commits,
 # credentials, shell, external writes and R3+ still wait for approval.

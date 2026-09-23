@@ -175,9 +175,13 @@ class CuratedMemory:
             authority = 1.0 if r.reviewed_by_user else (0.7 if r.confidence >= 0.9 else 0.5)
             commitment_bonus = 1.0 if (r.kind == "commitment" and r.valid_to is None) else 0.0
             user_confirmed = 1.0 if r.reviewed_by_user else 0.0
-            score = (0.35 * semantic + 0.20 * lexical + 0.15 * recency
-                     + 0.15 * authority + 0.10 * commitment_bonus
-                     + 0.05 * user_confirmed)
+            # Priors (recency, authority, commitment, confirmation) break ties
+            # between RELEVANT memories; gated by relevance so an unrelated
+            # but recent/authoritative record can't outrank a real match.
+            relevance = min(1.0, max(0.0, max(semantic * 2 - 1, lexical) / 0.3))
+            score = (0.35 * semantic + 0.20 * lexical
+                     + relevance * (0.15 * recency + 0.15 * authority
+                                    + 0.10 * commitment_bonus + 0.05 * user_confirmed))
             why = []
             if semantic > 0.6:
                 why.append("semantic")
@@ -214,6 +218,7 @@ class CuratedMemory:
                 "score": round(max(0.0, s["score"]), 3),
                 "source_refs": r.source_refs, "status": r.status,
                 "kind": r.kind, "why": s["why"],
+                "cos": round(s["semantic"] * 2 - 1, 3),  # raw similarity, for relevance floors
             })
         return results
 

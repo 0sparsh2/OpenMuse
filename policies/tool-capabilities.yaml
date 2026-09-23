@@ -2,6 +2,20 @@
 # A deployment maps each tool capability and argument pattern to a baseline class.
 # Phase 1 ships R0-R2 tools only. Later phases add R3-R5 tools here.
 tools:
+  task.plan:
+    risk: R0
+    capabilities: [task.plan]
+    side_effect: none
+    # Emits a visible checklist for the user; no side effects.
+  task.update:
+    risk: R0
+    capabilities: [task.plan]
+    side_effect: none
+  task.ask_user:
+    risk: R0
+    capabilities: [task.ask]
+    side_effect: none
+    # Shows a question card; the answer arrives as the user's next message.
   system.clock:
     risk: R0
     capabilities: [time.read]
@@ -205,4 +219,83 @@ tools:
   production.channel_send:
     risk: R2
     capabilities: [messaging.send]
+    side_effect: external_write
+
+  # --- App connectors via Composio (issue #7). Reads R1; reversible drafts/labels R2;
+  # --- anything sent/created/changed/deleted on the user's behalf is R3 and always asks.
+  gmail.fetch_emails:
+    risk: R1
+    capabilities: [connector.gmail]
+    side_effect: none
+  gmail.fetch_message_by_thread_id:
+    risk: R1
+    capabilities: [connector.gmail]
+    side_effect: none
+  gmail.fetch_message_by_message_id:
+    risk: R1
+    capabilities: [connector.gmail]
+    side_effect: none
+  gmail.list_labels:
+    risk: R1
+    capabilities: [connector.gmail]
+    side_effect: none
+  gmail.get_profile:
+    risk: R1
+    capabilities: [connector.gmail]
+    side_effect: none
+  gmail.create_email_draft:
+    risk: R2
+    capabilities: [connector.gmail]
+    side_effect: external_write
+  gmail.add_label_to_email:
+    risk: R2
+    capabilities: [connector.gmail]
+    side_effect: external_write
+  gmail.send_email:
+    risk: R3
+    capabilities: [connector.gmail]
+    side_effect: external_write
+  gmail.reply_to_thread:
+    risk: R3
+    capabilities: [connector.gmail]
+    side_effect: external_write
+  gmail.send_draft:
+    risk: R3
+    capabilities: [connector.gmail]
+    side_effect: external_write
+  gmail.forward_message:
+    risk: R3
+    capabilities: [connector.gmail]
+    side_effect: external_write
+  calendar.events_list:
+    risk: R1
+    capabilities: [connector.calendar]
+    side_effect: none
+  calendar.find_event:
+    risk: R1
+    capabilities: [connector.calendar]
+    side_effect: none
+  calendar.find_free_slots:
+    risk: R1
+    capabilities: [connector.calendar]
+    side_effect: none
+  calendar.list_calendars:
+    risk: R1
+    capabilities: [connector.calendar]
+    side_effect: none
+  calendar.create_event:
+    risk: R3
+    capabilities: [connector.calendar]
+    side_effect: external_write
+  calendar.quick_add:
+    risk: R3
+    capabilities: [connector.calendar]
+    side_effect: external_write
+  calendar.update_event:
+    risk: R3
+    capabilities: [connector.calendar]
+    side_effect: external_write
+  calendar.delete_event:
+    risk: R3
+    capabilities: [connector.calendar]
     side_effect: external_write

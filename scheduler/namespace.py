@@ -43,9 +43,14 @@ _DELIVERY_SCHEMA = {
 }
 
 
-def register(registry: ToolRegistry, service: ScheduleService) -> None:
+def register(registry: ToolRegistry, service, *, default_timezone=None) -> None:
+    """service: a ScheduleService, or fn(ctx) -> ScheduleService for per-user
+    schedules (multi-user deployments resolve by ctx.user_id)."""
     registry.register_namespace(
         "scheduler", "Scheduled jobs and event hooks (Phase 5).")
+    resolve = service if (callable(service) and not isinstance(service, ScheduleService)) \
+        else (lambda ctx: service)
+    tz_default = default_timezone or (lambda ctx: "UTC")
 
     def _sched_summary(s) -> dict:
         return {"schedule_id": s.schedule_id, "name": s.name, "kind": s.kind,
@@ -54,9 +59,9 @@ def register(registry: ToolRegistry, service: ScheduleService) -> None:
                 "next_fire_at": s.next_fire_at}
 
     def create(ctx, args):
-        sched = service.create_schedule(
+        sched = resolve(ctx).create_schedule(
             name=args["name"].strip(), schedule=args["schedule"],
-            timezone=args.get("timezone", "UTC"),
+            timezone=args.get("timezone") or tz_default(ctx),
             instructions=args["instructions"].strip(),
             misfire_policy=args.get("misfire_policy", "skip"),
             capability_ceiling=list(args.get("capability_ceiling", [])),
@@ -65,7 +70,7 @@ def register(registry: ToolRegistry, service: ScheduleService) -> None:
         )
         return {"schedule_id": sched.schedule_id, "version": sched.version,
                 "next_fire_at": sched.next_fire_at,
-                "next_runs": service.preview(sched.schedule_id)}
+                "next_runs": resolve(ctx).preview(sched.schedule_id)}
 
     registry.register(ToolDefinition(
         name="scheduler.create", version="1.0.0",
@@ -108,7 +113,7 @@ def register(registry: ToolRegistry, service: ScheduleService) -> None:
 
     def list_schedules(ctx, args):
         return {"schedules": [_sched_summary(s)
-                              for s in service.list_schedules()]}
+                              for s in resolve(ctx).list_schedules()]}
 
     registry.register(ToolDefinition(
         name="scheduler.list", version="1.0.0",
@@ -123,8 +128,8 @@ def register(registry: ToolRegistry, service: ScheduleService) -> None:
     ))
 
     def get(ctx, args):
-        sched = service.get_schedule(args["schedule_id"])
-        history = service.store.run_history(schedule_id=sched.schedule_id,
+        sched = resolve(ctx).get_schedule(args["schedule_id"])
+        history = resolve(ctx).store.run_history(schedule_id=sched.schedule_id,
                                             limit=10)
         return {"schedule": _sched_summary(sched),
                 "instruction": sched.instruction,
@@ -153,7 +158,7 @@ def register(registry: ToolRegistry, service: ScheduleService) -> None:
     def update(ctx, args):
         changes = {k: v for k, v in args.items()
                    if k != "schedule_id" and v is not None}
-        sched = service.update_schedule(args["schedule_id"], **changes)
+        sched = resolve(ctx).update_schedule(args["schedule_id"], **changes)
         return {"schedule_id": sched.schedule_id, "version": sched.version,
                 "next_fire_at": sched.next_fire_at}
 
@@ -188,7 +193,7 @@ def register(registry: ToolRegistry, service: ScheduleService) -> None:
     ))
 
     def remove(ctx, args):
-        service.remove_schedule(args["schedule_id"])
+        resolve(ctx).remove_schedule(args["schedule_id"])
         return {"removed": True, "schedule_id": args["schedule_id"]}
 
     registry.register(ToolDefinition(
@@ -207,7 +212,7 @@ def register(registry: ToolRegistry, service: ScheduleService) -> None:
     ))
 
     def run_now(ctx, args):
-        inst = service.run_now(args["schedule_id"])
+        inst = resolve(ctx).run_now(args["schedule_id"])
         return {"instance_id": inst.instance_id, "dedup_key": inst.dedup_key,
                 "scheduled_for": inst.scheduled_for}
 
@@ -228,7 +233,7 @@ def register(registry: ToolRegistry, service: ScheduleService) -> None:
 
     def _set_enabled(desired: bool, tool_name: str, description: str):
         def toggle(ctx, args):
-            sched = service.set_enabled(args["schedule_id"], desired)
+            sched = resolve(ctx).set_enabled(args["schedule_id"], desired)
             return {"schedule_id": sched.schedule_id, "enabled": sched.enabled}
         registry.register(ToolDefinition(
             name=tool_name, version="1.0.0", description=description,
@@ -249,7 +254,7 @@ def register(registry: ToolRegistry, service: ScheduleService) -> None:
     _set_enabled(True, "scheduler.enable", "Re-enable a disabled schedule.")
 
     def hook_create(ctx, args):
-        hook = service.create_hook(
+        hook = resolve(ctx).create_hook(
             name=args["name"].strip(), provider=args["provider"],
             event_type=args["event_type"],
             instructions=args["instructions"].strip(),
@@ -296,7 +301,7 @@ def register(registry: ToolRegistry, service: ScheduleService) -> None:
         return {"hooks": [{"hook_id": h.hook_id, "name": h.name,
                            "provider": h.provider, "event_type": h.event_type,
                            "enabled": h.enabled}
-                          for h in service.list_hooks()]}
+                          for h in resolve(ctx).list_hooks()]}
 
     registry.register(ToolDefinition(
         name="scheduler.hook_list", version="1.0.0",
