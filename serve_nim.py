@@ -124,6 +124,7 @@ backend = ApiBackend(
     library_root=os.path.join(state_root, "users"),      # per-user documents & PDF forms
     enable_proactive=True, proactive_llm=_llm_json,      # goals, ideas (+ generator), feed
     enable_subagents=True,                                # helper agents, incl. parallel fan-out
+    logins_key_file=os.path.join(state_root, "vault.key"),  # saved logins (encrypted at rest)
 )
 backend.proactive.start()
 backend.monitors.start()

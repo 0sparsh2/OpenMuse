@@ -49,6 +49,7 @@
     ["connectors", "Apps", "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM17 14v6M14 17h6"],
     ["activity", "Activity", "M3 12h4l3-8 4 16 3-8h4"],
     ["monitors", "Monitors", "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 15a3 3 0 100-6 3 3 0 000 6z"],
+    ["logins", "Saved logins", "M7 11V8a5 5 0 0110 0v3M5 11h14v10H5zM12 15v2"],
     ["usage", "Usage", "M4 20V10M10 20V4M16 20v-8M22 20H2"],
     ["voice", "Voice", "M12 3a3 3 0 013 3v6a3 3 0 01-6 0V6a3 3 0 013-3zM6 11a6 6 0 0012 0M12 18v3"],
   ];
@@ -674,6 +675,7 @@
         "goals.propose_idea": ["Saving an idea", "Saved an idea for later"],
         "goals.post_update": ["Posting to your feed", "Posted to your feed"],
         "monitor.list": ["Checking your monitors", "Checked your monitors"],
+        "browser.logins": ["Checking your saved logins", "Checked your saved logins"],
         "monitor.remove": ["Removing a monitor", "Removed a monitor"],
         "shell.exec": ["Running a command", "Ran a command"],
         "docs.list": ["Looking in your Library", "Looked in your Library"],
@@ -828,6 +830,10 @@
       const a = b.action || {};
       if (card.tool === "browser.start_session") return { title: "OpenMuse wants to open a browser", detail: "A private browser session you can watch live." };
       if (card.tool === "browser.act") {
+        if (a.kind === "type" && a.text_ref) return {
+          title: "OpenMuse wants to sign in to " + hostOf(b.credential_site || "") + (b.credential_user ? " as " + b.credential_user : ""),
+          detail: "It will enter your saved " + (b.credential_field === "password" ? "password" : "username") +
+                  " on " + (b.credential_site || "the site") + ". The password is never shown to the AI." };
         if (a.kind === "confirm_commit") return {
           title: "Checkout · OpenMuse wants to place an order" + (b.destination ? " at " + b.destination : ""),
           detail: "Verify the details on the merchant site before approving.", commit: true,
@@ -1039,7 +1045,7 @@
 
     function browserVerb(a) {
       a = a || {};
-      return ({ navigate: "Opening " + hostOf(a.url || ""), click: "Clicking", type: "Typing “" + (a.text || "").slice(0, 30) + "”",
+      return ({ navigate: "Opening " + hostOf(a.url || ""), click: "Clicking", type: a.text_ref ? "Signing in" : "Typing “" + (a.text || "").slice(0, 30) + "”",
                 select: "Selecting “" + (a.option || "") + "”", scroll: "Scrolling", wait: "Waiting for the page",
                 back: "Going back", confirm_commit: "Placing order" })[a.kind] || "Working";
     }
@@ -2116,6 +2122,53 @@
     root._refresh = refresh; refresh();
   }
 
+  /* -- saved logins view (issue #16) -------------------------------------------- */
+  function loginsView(root) {
+    root.innerHTML = "";
+    root.classList.add("memv");
+    root.appendChild(el("div", { class: "memv-head", html: "<h1>Saved logins</h1><p class='muted'>Sign-ins OpenMuse can use in its browser. It asks you before each sign-in, only fills them on the matching site, and never sees the password — it's encrypted and entered straight into the page.</p>" }));
+    const form = el("form", { class: "memv-upload", autocomplete: "off" });
+    form.innerHTML = "<strong>Add a login</strong>";
+    const site = el("input", { type: "text", placeholder: "Site, e.g. https://www.united.com", "aria-label": "Site", required: "" });
+    const user = el("input", { type: "text", placeholder: "Username or email", "aria-label": "Username", required: "", autocomplete: "off" });
+    const pw = el("input", { type: "password", placeholder: "Password", "aria-label": "Password", required: "", autocomplete: "new-password" });
+    const add = el("button", { type: "submit", class: "btn", text: "Save login" });
+    [site, user, pw, add].forEach((n) => form.appendChild(n));
+    root.appendChild(form);
+    const list = el("div", {});
+    root.appendChild(list);
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      add.disabled = true;
+      try {
+        const r = await API.req("POST", "/v1/logins", { body: { site: site.value, username: user.value, password: pw.value } });
+        toast("Saved your " + hostOf(r.login.site) + " login.");
+        form.reset(); refresh();
+      } catch (err) { toast("Couldn't save: " + ((err.body && err.body.error && err.body.error.message) || err.message)); }
+      finally { pw.value = ""; add.disabled = false; }
+    });
+    async function refresh() {
+      list.innerHTML = "";
+      let res;
+      try { res = await API.req("GET", "/v1/logins"); }
+      catch (e) { list.appendChild(el("div", { class: "memv-empty", text: "Saved logins unavailable: " + e.message })); return; }
+      if (!res.logins.length) list.appendChild(el("div", { class: "memv-empty", text: "No saved logins. Without one, OpenMuse pauses and lets you sign in yourself from the live browser." }));
+      res.logins.forEach((lg) => {
+        const c = el("div", { class: "memv-item" });
+        c.appendChild(el("div", { class: "memv-pname", text: hostOf(lg.site) }));
+        c.appendChild(el("div", { class: "memv-meta", text: lg.username + " · ●●●●●●●● · " +
+          (lg.last_used ? "last used " + fmtTime(lg.last_used * 1000) : "never used") }));
+        const acts = el("div", { class: "sched-acts" });
+        const del = el("button", { type: "button", class: "btn small danger", text: "Delete" });
+        del.addEventListener("click", async () => { await API.req("DELETE", "/v1/logins/" + lg.login_id); refresh(); });
+        acts.appendChild(del);
+        c.appendChild(acts);
+        list.appendChild(c);
+      });
+    }
+    root._refresh = refresh; refresh();
+  }
+
   /* -- monitors view (issue #11) --------------------------------------------- */
   function sparkline(points) {
     const vals = (points || []).map((p) => p[1]).filter((v) => typeof v === "number");
@@ -2500,6 +2553,7 @@
     voice: { render: voiceView },
     activity: { render: activityView, onShow: (r) => r._refresh && r._refresh() },
     monitors: { render: monitorsView, onShow: (r) => r._refresh && r._refresh() },
+    logins: { render: loginsView, onShow: (r) => r._refresh && r._refresh() },
   };
 
   function boot() {

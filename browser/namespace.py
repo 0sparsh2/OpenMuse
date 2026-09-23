@@ -356,8 +356,14 @@ def _obs_view(operator: BrowserOperator, session_id: str) -> dict:
 
 
 def _commit_bind_fields(operator: BrowserOperator, args: dict) -> dict:
-    """confirm_commit approvals bind to the pending proposal's exact fields."""
-    if (args.get("action") or {}).get("kind") != "confirm_commit":
+    """confirm_commit approvals bind to the pending proposal's exact fields;
+    saved-login fills show which site and account they sign in with."""
+    action = args.get("action") or {}
+    if action.get("text_ref") and getattr(operator, "credential_info", None):
+        info = operator.credential_info(args.get("session_id", ""), action["text_ref"]) or {}
+        return {"credential_site": info.get("site", "?"), "credential_user": info.get("username", "?"),
+                "credential_field": info.get("field", "?")}
+    if action.get("kind") != "confirm_commit":
         return {}
     proposal = _pending_proposal(operator, args.get("session_id", ""))
     return proposal.bind_fields() if proposal is not None else {}

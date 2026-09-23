@@ -87,6 +87,9 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         ("GET", r"^/v1/notifications/stream$", "notifications_stream", "sessions:read", False),
         ("POST", r"^/v1/notifications/read-all$", "notifications_read_all", "sessions:read", False),
         ("POST", r"^/v1/notifications/(?P<nid>[^/]+)/read$", "notification_read", "sessions:read", False),
+        ("GET", r"^/v1/logins$", "logins_list", "sessions:read", False),
+        ("POST", r"^/v1/logins$", "logins_add", "sessions:write", False),
+        ("DELETE", r"^/v1/logins/(?P<lid>lg_[a-f0-9]+)$", "logins_delete", "sessions:write", False),
         ("GET", r"^/v1/goals$", "goals_list", "sessions:read", False),
         ("POST", r"^/v1/goals$", "goals_create", "sessions:write", False),
         ("PATCH", r"^/v1/goals/(?P<gid>goal_[a-f0-9]+)$", "goals_update", "sessions:write", False),
@@ -611,6 +614,26 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         finally:
             self.backend._note_listeners.remove(listener)
         return None
+
+    # -- saved logins (issue #16) — passwords go in, never come out -------------------
+    def _vault(self):
+        if self.backend.logins is None:
+            raise _NotFound("saved logins")
+        return self.backend.logins
+
+    def h_logins_list(self, params):
+        return 200, {"logins": self._vault().list(self._uid())}, None
+
+    def h_logins_add(self, params):
+        b = self._parse_json()
+        rec = self._vault().add(self._uid(), site=str(b.get("site", "")), username=str(b.get("username", "")),
+                                password=str(b.get("password", "")), label=str(b.get("label", "")))
+        return 201, {"login": rec}, None
+
+    def h_logins_delete(self, params):
+        if not self._vault().delete(self._uid(), params["lid"]):
+            raise _NotFound("login")
+        return 200, {"deleted": params["lid"]}, None
 
     # -- goals / ideas / feed (issue #12) -------------------------------------------
     def _pro(self):

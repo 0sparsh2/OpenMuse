@@ -125,6 +125,7 @@ class _Session:
         self.controller = "agent"       # agent | user  (user = "Take control")
         self.user_touched = False       # user acted since the agent last looked
         self.failures: dict[str, int] = {}
+        self.downloads: list[dict] = []
 
 
 class LiveBrowserOperator(BrowserOperator):
@@ -134,6 +135,12 @@ class LiveBrowserOperator(BrowserOperator):
     def __init__(self, profile_root: str, *, headless: bool = True,
                  start_url: str = "about:blank"):
         self.profile_root = profile_root
+        # Set by the host: resolve a vault ref to a secret for (user, ref, page_url)
+        # (browser/logins.py), and receive finished downloads (user, name, bytes)
+        # -> artifact id (the Library). Both optional.
+        self.credential_resolver = None
+        self.credential_describer = None   # (user, ref) -> {"site","username","field"} (no secret)
+        self.download_sink = None
         self.headless = headless
         self.start_url = start_url
         os.makedirs(profile_root, exist_ok=True)
@@ -287,9 +294,26 @@ class LiveBrowserOperator(BrowserOperator):
         except Exception:
             pass
 
+    def _on_download(self, s: _Session, download) -> None:
+        """Save a finished download into the user's Library (after its checks)."""
+        name = download.suggested_filename or "download"
+        try:
+            path = download.path()  # waits for the download to finish
+            with open(path, "rb") as fh:
+                data = fh.read()
+            if self.download_sink is None:
+                self._log(s, f"Downloaded {name} (no Library configured)", kind="download")
+                return
+            aid = self.download_sink(s.user_id, name, data)
+            s.downloads.append({"name": name, "artifact_id": aid})
+            self._log(s, f"Saved {name} to your Library", kind="download")
+        except Exception as exc:
+            self._log(s, f"Download blocked: {str(exc)[:120]}", kind="download")
+
     def _adopt_page(self, s: _Session, page) -> None:
         """A link opened a new tab/popup: follow it (agents otherwise get stuck)."""
         s.page = page
+        page.on("download", lambda d, s=s: self._on_download(s, d))
         page.on("close", lambda _p, s=s: self._on_page_closed(s))
         try:
             page.wait_for_load_state("domcontentloaded", timeout=10000)
@@ -331,13 +355,14 @@ class LiveBrowserOperator(BrowserOperator):
             self._ensure_browser()
             sid = "br_" + uuid.uuid4().hex[:12]
             s = _Session(sid, tenant_id, user_id)
-            kw = {"viewport": VIEWPORT, "locale": "en-US"}
+            kw = {"viewport": VIEWPORT, "locale": "en-US", "accept_downloads": True}
             profile = self._profile_path(user_id)
             if os.path.exists(profile):
                 kw["storage_state"] = profile  # this user's persistent profile
             s.context = self._browser.new_context(**kw)
             s.page = s.context.new_page()
             s.context.on("page", lambda pg, s=s: self._adopt_page(s, pg))
+            s.page.on("download", lambda d, s=s: self._on_download(s, d))
             if self.start_url and self.start_url != "about:blank":
                 s.page.goto(self.start_url, wait_until="domcontentloaded", timeout=30000)
             self._sessions[sid] = s
@@ -400,6 +425,13 @@ class LiveBrowserOperator(BrowserOperator):
             s = self._get(session_id)
             return self._obs_from_raw(s, self._observe(s))
         return self._call(run)
+
+    def credential_info(self, session_id: str, ref: str) -> dict | None:
+        """Non-secret description of a saved-login ref, for the approval card."""
+        s = self._sessions.get(session_id)
+        if s is None or self.credential_describer is None:
+            return None
+        return self.credential_describer(s.user_id, ref)
 
     def pending_commit_proposal(self, session_id: str):
         s = self._sessions.get(session_id)
@@ -513,16 +545,43 @@ class LiveBrowserOperator(BrowserOperator):
             self._settle(s, 3000)
             out["clicked"] = label
 
-        elif kind == "type":
-            if action.get("text_ref"):
+        elif kind == "type" and action.get("text_ref"):
+            # Saved-login fill: approved per call, origin-checked, value never
+            # logged / observed / returned (password inputs render masked).
+            if not action.get("approved_credential_fill"):
+                raise BrowserError("CREDENTIAL_FILL_NEEDS_APPROVAL", "signing in needs the user's approval")
+            if self.credential_resolver is None:
                 raise BrowserError("CREDENTIAL_FILL_UNSUPPORTED",
-                                   "credential fill is not available in the live browser; "
-                                   "ask the user to sign in themselves from the live view")
+                                   "no saved logins here; ask the user to sign in from the live view")
+            loc = self._element(s, action.get("element_id", ""))
+            try:
+                secret = self.credential_resolver(s.user_id, action["text_ref"], page.url)
+            except PermissionError as exc:
+                raise BrowserError("CREDENTIAL_ORIGIN_MISMATCH", str(exc))
+            except ValueError as exc:
+                raise BrowserError("CREDENTIAL_UNAVAILABLE", str(exc))
+            is_password = action["text_ref"].endswith("#password")
+            label = _label_of(loc) if not is_password else "password"
+            self._point_at(s, loc)
+            self._log(s, "Entering your saved " + ("password" if is_password else "username"), kind="type")
+            try:
+                loc.click(timeout=5000)
+                loc.fill(secret, timeout=5000)
+                secret = ""
+                if action.get("submit"):
+                    page.keyboard.press("Enter")
+                    self._settle(s, 3000)
+            except Exception as exc:
+                raise BrowserError("TYPE_FAILED", str(exc).splitlines()[0][:200])
+            out["typed_into"] = label
+            out["credential"] = True
+
+        elif kind == "type":
             loc = self._element(s, action.get("element_id", ""))
             if (loc.get_attribute("type") or "").lower() == "password":
                 raise BrowserError("CREDENTIAL_FIELD",
-                                   "the agent never types into password fields; the user "
-                                   "can sign in from the live browser view")
+                                   "never type passwords as text; use a saved login ref from "
+                                   "browser.logins (text_ref), or ask the user to sign in from the live view")
             text = action.get("text", "")
             label = _label_of(loc)
             self._point_at(s, loc)
@@ -630,6 +689,7 @@ class LiveBrowserOperator(BrowserOperator):
             "log": s.log[-40:],
             "pending_commit": bool(s.pending_commit),
             "controller": s.controller,
+            "downloads": list(s.downloads[-10:]),
         }
 
     def frame(self, session_id: str) -> tuple[bytes, int]:

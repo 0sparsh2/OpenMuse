@@ -91,6 +91,7 @@ class ApiBackend:
         enable_proactive: bool = False,
         proactive_llm=None,
         enable_subagents: bool = False,
+        logins_key_file: str | None = None,
     ):
         self.tenant_id = tenant_id
         self.workspace_root = workspace_root
@@ -217,6 +218,19 @@ class ApiBackend:
             subagent_ns.register(self.registry, self.subagents)
             register_parallel(self.registry, self.subagents)
 
+        # Saved logins + downloads for the live browser (issue #16).
+        self.logins = None
+        if logins_key_file and browser_operator is not None and hasattr(browser_operator, "credential_resolver"):
+            from browser.logins import LoginVault
+            self.logins = LoginVault(self, key=os.environ.get("OPENMUSE_VAULT_KEY", ""), key_file=logins_key_file)
+            browser_operator.credential_resolver = self.logins.resolve
+            browser_operator.credential_describer = self.logins.info
+            self._register_logins_tool()
+        if browser_operator is not None and hasattr(browser_operator, "download_sink") and self.library is not None:
+            browser_operator.download_sink = (
+                lambda uid, name, data: self.library.add(uid or "user_api", name, data,
+                                                         source="browser download")["artifact_id"])
+
         # Monitors & alerts (issue #11): price / text / change watches.
         self.monitors = None
         if enable_monitors:
@@ -233,6 +247,22 @@ class ApiBackend:
             scheduler_ns.register(
                 self.registry, lambda ctx: self.schedules.service_for(getattr(ctx, "user_id", "")),
                 default_timezone=lambda ctx: self.user_timezone(getattr(ctx, "user_id", "")))
+
+    def _register_logins_tool(self) -> None:
+        from tools.registry import ToolDefinition
+        vault = self.logins
+        self.registry.register(ToolDefinition(
+            name="browser.logins", version="1.0.0",
+            description=("List the user's saved logins as references (site + username, never the password). "
+                         "To sign in, type into the username/password fields with browser.act kind=type and "
+                         "text_ref='<ref>#username' / '<ref>#password' — the user approves each sign-in, and "
+                         "it only works on the login's own site."),
+            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+            output_schema={"type": "object"}, capabilities=["browser.logins"], side_effect="none",
+            idempotency="pure", default_timeout_ms=5_000,
+            execute=lambda ctx, a: {"logins": [{"ref": l["ref"], "site": l["site"], "username": l["username"]}
+                                               for l in vault.list(getattr(ctx, "user_id", "") or "user_api")]},
+        ))
 
     # -- per-user profile helpers -------------------------------------------------
     def user_timezone(self, user_id: str) -> str:

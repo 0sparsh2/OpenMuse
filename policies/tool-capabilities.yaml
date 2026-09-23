@@ -164,6 +164,11 @@ tools:
     # escalates to R4 (commit barrier — needs a fresh state-bound approval)
     # and kind=upload escalates to R3. Evasion kinds are refused by the
     # operator before policy is even consulted.
+  browser.logins:
+    risk: R1
+    capabilities: [browser.logins]
+    side_effect: none
+    # Lists saved-login REFERENCES (site + username), never passwords.
   browser.checkpoint:
     risk: R1
     capabilities: [browser.checkpoint]

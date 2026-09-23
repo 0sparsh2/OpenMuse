@@ -4,3 +4,4 @@ pyyaml>=6.0
 pypdf>=4.0
 composio>=0.23
 openpyxl>=3.1
+cryptography>=42

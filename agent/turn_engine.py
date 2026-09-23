@@ -293,9 +293,11 @@ def advance_run(run: Run, deps: Deps, log: EventLog) -> Run:
                 # tool timeouts are the tool's own, bounded by the run's remaining time
                 deadline_ms=max(30_000, int((run.budgets.max_wall_seconds - run.wall_elapsed_s) * 1000)),
             )
+            # consume after execution: the tool re-checks the unused, bound
+            # grant itself (browser commits/credential fills), then it's spent
+            envelopes.extend(execute_batch(deps.registry, exec_ctx, [p]))
             if grant:
                 deps.approvals.consume(grant)
-            envelopes.extend(execute_batch(deps.registry, exec_ctx, [p]))
         for p in rejected:
             envelopes.append(rejection_envelope(p))
             log.append("tool.rejected", {"call_id": p.call_id, "tool": p.tool_name,
