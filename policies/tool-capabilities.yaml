@@ -2,6 +2,19 @@
 # A deployment maps each tool capability and argument pattern to a baseline class.
 # Phase 1 ships R0-R2 tools only. Later phases add R3-R5 tools here.
 tools:
+  monitor.create:
+    risk: R2
+    capabilities: [monitor.manage]
+    side_effect: local_write
+    # Reads a public page on a schedule and notifies the user; never acts on the page.
+  monitor.list:
+    risk: R0
+    capabilities: [monitor.read]
+    side_effect: none
+  monitor.remove:
+    risk: R2
+    capabilities: [monitor.manage]
+    side_effect: local_write
   task.plan:
     risk: R0
     capabilities: [task.plan]

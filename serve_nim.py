@@ -101,7 +101,8 @@ def _connectors():
     return ComposioBridge(os.environ["COMPOSIO_API_KEY"],
                           cache_dir=os.path.join(ROOT, ".data", "cache"),
                           public_url=os.environ.get("OPENMUSE_PUBLIC_URL", "http://127.0.0.1:8080"),
-                          log=lambda m: print(m, flush=True))
+                          log=lambda m: print(m, flush=True),
+                          timezone_for=lambda uid: backend.user_timezone(uid))
 
 state_root = os.path.join(ROOT, ".data")
 memory_service = MemoryService(state_root, prompts_dir=os.path.join(ROOT, "prompts"),
@@ -119,7 +120,9 @@ backend = ApiBackend(
     db_path=os.path.join(state_root, "openmuse.db"),     # chats/runs/events/approvals survive restarts
     scheduling_root=os.path.join(state_root, "users"),   # per-user schedules + runner
     connectors=_connectors(),                             # Gmail / Calendar via Composio
+    enable_monitors=True, monitors_llm=_llm_json,         # price / text / change watches
 )
+backend.monitors.start()
 backend.schedules.start()
 # Autonomy (on by default; OPENMUSE_AUTONOMY=off restores ask-for-everything):
 # reversible local steps such as browsing run on their own, while commits,

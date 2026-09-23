@@ -48,6 +48,7 @@
     ["schedules", "Schedules", "M12 7v5l3 3M12 21a9 9 0 100-18 9 9 0 000 18z"],
     ["connectors", "Apps", "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM17 14v6M14 17h6"],
     ["activity", "Activity", "M3 12h4l3-8 4 16 3-8h4"],
+    ["monitors", "Monitors", "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 15a3 3 0 100-6 3 3 0 000 6z"],
     ["usage", "Usage", "M4 20V10M10 20V4M16 20v-8M22 20H2"],
     ["voice", "Voice", "M12 3a3 3 0 013 3v6a3 3 0 01-6 0V6a3 3 0 013-3zM6 11a6 6 0 0012 0M12 18v3"],
   ];
@@ -645,6 +646,9 @@
         "files.write": ["Saving " + (a.path || "a file"), "Saved " + (a.path || "a file")],
         "files.list": ["Looking at your files", "Looked at your files"],
         "web.fetch": ["Reading " + hostOf(a.url || ""), "Read " + hostOf(a.url || "")],
+        "monitor.create": ["Setting up a watch on " + hostOf(a.url || ""), "Watching " + hostOf(a.url || "")],
+        "monitor.list": ["Checking your monitors", "Checked your monitors"],
+        "monitor.remove": ["Removing a monitor", "Removed a monitor"],
         "shell.exec": ["Running a command", "Ran a command"],
       }[blk.tool];
       if (failed) return blk.status === "Blocked by policy" ? "Blocked by policy: " + (blk.title || blk.tool) : "Couldn't finish: " + (blk.title || blk.tool);
@@ -676,6 +680,29 @@
         meta.appendChild(el("div", { class: "mc-tool-t", text: d.title || "Event" }));
         meta.appendChild(el("div", { class: "mc-tool-s", text: [d.when, d.location].filter(Boolean).join(" · ") }));
         if (d.url) action("Open in calendar", d.url);
+      } else if (d.type === "agenda") {
+        ic.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>';
+        meta.appendChild(el("div", { class: "mc-tool-t", text: "Your calendar" }));
+        meta.appendChild(el("div", { class: "mc-tool-s", text: d.title }));
+        const ul = el("ul", { class: "mc-agenda" });
+        (d.items || []).forEach((it) => {
+          const li = el("li", {});
+          li.appendChild(el("span", { class: "mc-agenda-when", text: it.when }));
+          const t = it.url ? el("a", { href: it.url, target: "_blank", rel: "noopener noreferrer", text: it.title })
+                           : el("span", { text: it.title });
+          li.appendChild(t);
+          if (it.location) li.appendChild(el("span", { class: "mc-agenda-loc", text: it.location }));
+          ul.appendChild(li);
+        });
+        if (d.more) ul.appendChild(el("li", { class: "mc-agenda-more", text: "+" + d.more + " more" }));
+        card.appendChild(ul);
+      } else if (d.type === "monitor") {
+        ic.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+        meta.appendChild(el("div", { class: "mc-tool-t", text: d.title || "Monitor" }));
+        meta.appendChild(el("div", { class: "mc-tool-s", text: d.subtitle || "Watching" }));
+        const b = el("button", { type: "button", class: "mc-open", text: "See monitors" });
+        b.addEventListener("click", () => showTab("monitors"));
+        card.appendChild(b);
       } else if (d.type === "document") {
         ic.innerHTML = STEP_ICONS.file;
         meta.appendChild(el("div", { class: "mc-tool-t", text: d.title || "Document" }));
@@ -1900,6 +1927,89 @@
     root._refresh = refresh; refresh();
   }
 
+  /* -- monitors view (issue #11) --------------------------------------------- */
+  function sparkline(points) {
+    const vals = (points || []).map((p) => p[1]).filter((v) => typeof v === "number");
+    if (vals.length < 2) return "";
+    const w = 120, h = 32, min = Math.min(...vals), max = Math.max(...vals), span = max - min || 1;
+    const pts = vals.map((v, i) => (i * w / (vals.length - 1)).toFixed(1) + "," + (h - 3 - (v - min) * (h - 6) / span).toFixed(1)).join(" ");
+    return '<svg class="spark" viewBox="0 0 ' + w + " " + h + '" aria-hidden="true"><polyline points="' + pts + '" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
+  }
+  function monitorsView(root) {
+    root.innerHTML = "";
+    root.classList.add("memv");
+    root.appendChild(el("div", { class: "memv-head", html: "<h1>Monitors</h1><p class='muted'>Pages OpenMuse watches for you — price drops, restocks, or any change. You'll get a notification when something happens.</p>" }));
+    const form = el("form", { class: "memv-upload" });
+    form.innerHTML = "<strong>New monitor</strong>";
+    const url = el("input", { type: "url", placeholder: "https://… page to watch", "aria-label": "Page URL", required: "" });
+    const row = el("div", { class: "sched-when" });
+    const kind = el("select", { "aria-label": "Condition" });
+    [["price_below", "Price drops below"], ["price_above", "Price rises above"], ["text_appears", "Text appears"],
+     ["text_disappears", "Text disappears"], ["changed", "Anything changes"]].forEach(([v, t]) => kind.appendChild(el("option", { value: v, text: t })));
+    const target = el("input", { type: "text", placeholder: "e.g. 199.99", "aria-label": "Target" });
+    const every = el("select", { "aria-label": "Check every" });
+    [[15, "every 15 min"], [60, "every hour"], [360, "every 6 hours"], [1440, "every day"]].forEach(([v, t]) => every.appendChild(el("option", { value: String(v), text: t })));
+    every.value = "60";
+    [kind, target, every].forEach((n) => row.appendChild(n));
+    const add = el("button", { type: "submit", class: "btn", text: "Start watching" });
+    [url, row, add].forEach((n) => form.appendChild(n));
+    kind.addEventListener("change", () => {
+      target.hidden = kind.value === "changed";
+      target.placeholder = kind.value.startsWith("price") ? "e.g. 199.99" : "e.g. In stock";
+    });
+    root.appendChild(form);
+    const list = el("div", {});
+    root.appendChild(list);
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      add.disabled = true;
+      try {
+        const r = await API.req("POST", "/v1/monitors", { body: { url: url.value, kind: kind.value, target: target.value, every_minutes: parseInt(every.value, 10) } });
+        toast("Watching " + r.monitor.name + ".");
+        form.reset(); every.value = "60"; refresh();
+      } catch (err) { toast("Couldn't start: " + ((err.body && err.body.error && err.body.error.message) || err.message)); }
+      finally { add.disabled = false; }
+    });
+    const LABEL = { price_below: "under ", price_above: "over ", text_appears: "shows “", text_disappears: "loses “", changed: "any change" };
+    async function refresh() {
+      list.innerHTML = "";
+      let res;
+      try { res = await API.req("GET", "/v1/monitors"); }
+      catch (e) { list.appendChild(el("div", { class: "memv-empty", text: "Monitors unavailable: " + e.message })); return; }
+      if (!res.monitors.length) list.appendChild(el("div", { class: "memv-empty", text: "Nothing watched yet. Add a page above, or ask in chat: “tell me when these headphones drop under $150”." }));
+      res.monitors.forEach((m) => {
+        const c = el("div", { class: "memv-item mon-item" + (m.active ? "" : " old") });
+        const cond = LABEL[m.kind] + (m.kind === "changed" ? "" :
+          (m.kind.startsWith("price") ? (m.currency || "$") : "") + m.target + (m.kind.startsWith("text") ? "”" : ""));
+        const top = el("div", { class: "memv-item-top" }, [el("span", { class: "memv-badge" + (m.condition_met ? " ok" : ""), text: m.condition_met ? "Met" : "Watching" }),
+          el("span", { class: "memv-badge soft", text: cond }), el("span", { class: "memv-badge soft", text: "every " + (m.every_minutes >= 60 ? (m.every_minutes / 60) + "h" : m.every_minutes + "m") })]);
+        if (!m.active) top.appendChild(el("span", { class: "memv-badge warn", text: "paused" }));
+        if (m.failures) top.appendChild(el("span", { class: "memv-badge warn", text: m.failures + " failed check(s)" }));
+        c.appendChild(top);
+        const line = el("div", { class: "mon-line" });
+        const left = el("div", {});
+        left.appendChild(el("div", { class: "memv-pname", text: m.name }));
+        const a = el("a", { href: m.url, target: "_blank", rel: "noopener noreferrer", class: "memv-meta", text: hostOf(m.url) });
+        left.appendChild(a);
+        line.appendChild(left);
+        const right = el("div", { class: "mon-val" });
+        right.innerHTML = sparkline(m.history);
+        right.appendChild(el("strong", { text: typeof m.last_value === "number" ? (m.currency || "$") + m.last_value.toFixed(2) : (m.last_value || "—") }));
+        line.appendChild(right);
+        c.appendChild(line);
+        if (m.last_checked) c.appendChild(el("div", { class: "memv-meta", text: "Checked " + fmtTime(m.last_checked * 1000) + (m.last_error ? " · " + m.last_error : "") }));
+        const acts = el("div", { class: "sched-acts" });
+        const mk = (label, fn, cls) => { const b = el("button", { type: "button", class: "btn small " + (cls || "secondary"), text: label }); b.addEventListener("click", fn); acts.appendChild(b); };
+        mk("Check now", async () => { await API.req("POST", "/v1/monitors/" + m.monitor_id + "/check", { body: {} }); refresh(); });
+        mk(m.active ? "Pause" : "Resume", async () => { await API.req("PATCH", "/v1/monitors/" + m.monitor_id, { body: { active: !m.active } }); refresh(); });
+        mk("Delete", async () => { await API.req("DELETE", "/v1/monitors/" + m.monitor_id); refresh(); }, "danger");
+        c.appendChild(acts);
+        list.appendChild(c);
+      });
+    }
+    root._refresh = refresh; refresh();
+  }
+
   /* -- activity view (issue #6): every task across chats -------------------- */
   function activityView(root) {
     root.innerHTML = "";
@@ -1979,6 +2089,7 @@
       $(".notif-panel") && $(".notif-panel").remove();
       if (!note.read_at) { note.read_at = Date.now() / 1000; this.renderDot(); API.notifications.read(note.id).catch(() => {}); }
       if (note.link && note.link.chat_id && state.openChat) state.openChat(note.link.chat_id);
+      else if (note.link && note.link.monitor_id) showTab("monitors");
     },
     renderPanel(panel) {
       panel.innerHTML = "";
@@ -2198,6 +2309,7 @@
     usage: { render: usageView, onShow: (r) => r._refresh && r._refresh() },
     voice: { render: voiceView },
     activity: { render: activityView, onShow: (r) => r._refresh && r._refresh() },
+    monitors: { render: monitorsView, onShow: (r) => r._refresh && r._refresh() },
   };
 
   function boot() {

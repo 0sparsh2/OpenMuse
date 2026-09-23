@@ -87,6 +87,11 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         ("GET", r"^/v1/notifications/stream$", "notifications_stream", "sessions:read", False),
         ("POST", r"^/v1/notifications/read-all$", "notifications_read_all", "sessions:read", False),
         ("POST", r"^/v1/notifications/(?P<nid>[^/]+)/read$", "notification_read", "sessions:read", False),
+        ("GET", r"^/v1/monitors$", "list_monitors", "runs:read", False),
+        ("POST", r"^/v1/monitors$", "create_monitor", "runs:write", False),
+        ("PATCH", r"^/v1/monitors/(?P<mid>[^/]+)$", "update_monitor", "runs:write", False),
+        ("DELETE", r"^/v1/monitors/(?P<mid>[^/]+)$", "delete_monitor", "runs:write", False),
+        ("POST", r"^/v1/monitors/(?P<mid>[^/]+)/check$", "check_monitor", "runs:write", False),
         ("GET", r"^/v1/apps$", "list_apps", "sessions:read", False),
         ("POST", r"^/v1/apps/(?P<tk>[a-z0-9_]+)/connect$", "connect_app", "sessions:write", False),
         ("DELETE", r"^/v1/apps/(?P<tk>[a-z0-9_]+)$", "disconnect_app", "sessions:write", False),
@@ -591,6 +596,47 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         finally:
             self.backend._note_listeners.remove(listener)
         return None
+
+    # -- monitors (issue #11) -------------------------------------------------------
+    def _mons(self):
+        if self.backend.monitors is None:
+            raise _NotFound("monitors")
+        return self.backend.monitors
+
+    def h_list_monitors(self, params):
+        ms = self._mons()
+        return 200, {"monitors": [ms.view(m) for m in ms.list(self._uid())]}, None
+
+    def h_create_monitor(self, params):
+        ms = self._mons()
+        body = self._parse_json()
+        m = ms.create(self._uid(), url=str(body.get("url", "")), kind=str(body.get("kind", "")),
+                      target=str(body.get("target", "")), name=str(body.get("name", "")),
+                      every_minutes=int(body.get("every_minutes", 60) or 60))
+        return 201, {"monitor": ms.view(ms.check(m))}, None
+
+    def _owned_monitor(self, mid):
+        ms = self._mons()
+        m = ms.get(self._uid(), mid)
+        if m is None:
+            raise _NotFound("monitor")
+        return ms, m
+
+    def h_update_monitor(self, params):
+        ms, m = self._owned_monitor(params["mid"])
+        body = self._parse_json()
+        if "active" in body:
+            m = ms.set_active(self._uid(), m["monitor_id"], bool(body["active"]))
+        return 200, {"monitor": ms.view(m)}, None
+
+    def h_delete_monitor(self, params):
+        ms, m = self._owned_monitor(params["mid"])
+        ms.remove(self._uid(), m["monitor_id"])
+        return 200, {"deleted": m["monitor_id"]}, None
+
+    def h_check_monitor(self, params):
+        ms, m = self._owned_monitor(params["mid"])
+        return 200, {"monitor": ms.view(ms.check(m))}, None
 
     # -- app connectors (issue #7) ------------------------------------------------
     def h_list_apps(self, params):

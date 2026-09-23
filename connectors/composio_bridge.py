@@ -74,6 +74,9 @@ UPCOMING = [("googledrive", "Google Drive"), ("outlook", "Outlook"), ("slack", "
             ("notion", "Notion"), ("todoist", "Todoist"), ("spotify", "Spotify")]
 
 SIDE_EFFECT = {"R1": "none", "R2": "external_write", "R3": "external_write"}
+# calendar tools that take a timezone, and the parameter name each uses
+TZ_PARAMS = {"GOOGLECALENDAR_EVENTS_LIST": "timeZone", "GOOGLECALENDAR_CREATE_EVENT": "timezone",
+             "GOOGLECALENDAR_UPDATE_EVENT": "timezone", "GOOGLECALENDAR_FIND_FREE_SLOTS": "timezone"}
 
 
 def tool_name(namespace: str, slug: str) -> str:
@@ -119,7 +122,7 @@ class NotConfigured(RuntimeError):
 
 class ComposioBridge:
     def __init__(self, api_key: str, *, cache_dir: str, public_url: str = "http://127.0.0.1:8080",
-                 client=None, log=lambda m: None):
+                 client=None, log=lambda m: None, timezone_for=None):
         if not api_key and client is None:
             raise NotConfigured("COMPOSIO_API_KEY is not set")
         self._client = client
@@ -129,6 +132,8 @@ class ComposioBridge:
         self.log = log
         self._lock = threading.Lock()
         self._status: dict[str, tuple[float, dict]] = {}   # user_id -> (at, {toolkit: account})
+        # user_id -> IANA timezone; calendar calls default to the user's zone
+        self.timezone_for = timezone_for or (lambda uid: "")
         os.makedirs(cache_dir, exist_ok=True)
 
     @property
@@ -196,9 +201,15 @@ class ComposioBridge:
         defaults = TOOLKITS[toolkit].get("defaults", {}).get(slug, {})
         app = TOOLKITS[toolkit]["name"]
 
+        tz_param = TZ_PARAMS.get(slug)
+
         def execute(ctx, args):
             uid = getattr(ctx, "user_id", "") or "user_api"
             arguments = {**defaults, **{k: v for k, v in args.items() if k != "user_id"}}
+            if tz_param and not arguments.get(tz_param):
+                tz = self.timezone_for(uid)
+                if tz:
+                    arguments[tz_param] = tz  # the model's explicit choice always wins
             try:
                 resp = self.client.tools.execute(slug, arguments=arguments, user_id=uid,
                                                  dangerously_skip_version_check=True)
@@ -305,12 +316,15 @@ def _event_card(out: dict) -> dict | None:
             items = rd.get("items") or ([rd] if rd.get("summary") else [])
     if not items:
         return None
-    e = items[0]
-    start = (e.get("start") or {})
-    when = start.get("dateTime") or start.get("date") or ""
-    return {"type": "event", "title": str(e.get("summary") or "(no title)")[:120],
-            "when": _pretty_when(when), "location": str(e.get("location") or "")[:80],
-            "count": len(items), "url": e.get("htmlLink") or ""}
+    def one(e):
+        start = (e.get("start") or {})
+        return {"title": str(e.get("summary") or "(no title)")[:100],
+                "when": _pretty_when(start.get("dateTime") or start.get("date") or ""),
+                "location": str(e.get("location") or "")[:60], "url": e.get("htmlLink") or ""}
+    if len(items) > 1:  # an agenda: several events in one card
+        return {"type": "agenda", "title": f"{len(items)} events", "items": [one(e) for e in items[:6]],
+                "more": max(0, len(items) - 6)}
+    return {"type": "event", **one(items[0]), "count": 1}
 
 
 def _pretty_when(iso: str) -> str:

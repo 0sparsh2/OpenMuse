@@ -85,6 +85,8 @@ class ApiBackend:
         db_path: str | None = None,
         scheduling_root: str | None = None,
         connectors=None,
+        monitors_llm=None,
+        enable_monitors: bool = False,
     ):
         self.tenant_id = tenant_id
         self.workspace_root = workspace_root
@@ -178,6 +180,13 @@ class ApiBackend:
         if connectors is not None:
             bridged = connectors.register_tools(self.registry)
             print(f"connectors: {len(bridged)} tools bridged", flush=True)
+
+        # Monitors & alerts (issue #11): price / text / change watches.
+        self.monitors = None
+        if enable_monitors:
+            from .monitors import Monitors, register_tools as register_monitor_tools
+            self.monitors = Monitors(self, llm=monitors_llm)
+            register_monitor_tools(self.registry, self.monitors)
 
         # Per-user schedules (issue #4): tools + runner thread (started by the host).
         self.schedules = None

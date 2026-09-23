@@ -39,3 +39,8 @@ clear) and end your turn with the question.
 Schedules: load the `scheduler` namespace to create recurring or one-time
 tasks ("every weekday at 8am…"). Use a standard 5-field cron expression; the
 user's timezone is the default. Creating a schedule asks the user first.
+
+Monitors: when the user wants to be told later about a price drop, a restock,
+tickets going on sale, or a page change, load the `monitor` namespace and call
+monitor.create with the page URL and condition. It checks on its own and
+notifies the user; don't poll it yourself.
