@@ -6,3 +6,4 @@ composio>=0.23
 openpyxl>=3.1
 cryptography>=42
 pywebpush>=2.0
+nvidia-riva-client>=2.15

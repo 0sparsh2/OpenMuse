@@ -166,6 +166,11 @@ class OpenAICompatProvider(Provider):
             ]
             payload["tool_choice"] = "auto"
 
+        from gateway.streaming import sink_for
+        sink = sink_for(request.metadata.run_id if request.metadata else None)
+        if sink is not None:
+            payload["stream"] = True
+
         try:
             resp = requests.post(
                 f"{self.base_url}/chat/completions",
@@ -175,6 +180,7 @@ class OpenAICompatProvider(Provider):
                 },
                 json=payload,
                 timeout=self.timeout_s,
+                stream=sink is not None,
             )
         except requests.Timeout as exc:
             raise ProviderError(TRANSIENT, f"provider timeout: {exc}", retryable=True)
@@ -197,7 +203,10 @@ class OpenAICompatProvider(Provider):
         if not resp.ok:
             raise ProviderError(TRANSIENT, f"unexpected provider status {resp.status_code}", retryable=True)
 
-        data = resp.json()
+        if sink is not None:
+            data = self._read_stream(resp, sink, request.metadata.step if request.metadata else 0)
+        else:
+            data = resp.json()
         try:
             choice = data["choices"][0]["message"]
         except (KeyError, IndexError) as exc:
@@ -225,3 +234,44 @@ class OpenAICompatProvider(Provider):
                 "output_tokens": usage.get("completion_tokens", 0),
             },
         )
+
+    @staticmethod
+    def _read_stream(resp, sink, step: int) -> dict:
+        """Assemble a streamed chat completion into the non-streamed shape,
+        passing each content delta to the sink as it arrives."""
+        content, calls, finish, usage = [], {}, "", {}
+        try:
+            for raw in resp.iter_lines(decode_unicode=True):
+                if not raw or not raw.startswith("data:"):
+                    continue
+                chunk = raw[5:].strip()
+                if chunk == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(chunk)
+                except json.JSONDecodeError:
+                    continue
+                usage = obj.get("usage") or usage
+                for ch in obj.get("choices") or []:
+                    d = ch.get("delta") or {}
+                    if d.get("content"):
+                        content.append(d["content"])
+                        try:
+                            sink(d["content"], step)
+                        except Exception:
+                            pass  # a listener must never break the model call
+                    for tc in d.get("tool_calls") or []:
+                        slot = calls.setdefault(tc.get("index", 0), {"id": "", "type": "function",
+                                                                     "function": {"name": "", "arguments": ""}})
+                        if tc.get("id"):
+                            slot["id"] = tc["id"]
+                        fn = tc.get("function") or {}
+                        slot["function"]["name"] += fn.get("name") or ""
+                        slot["function"]["arguments"] += fn.get("arguments") or ""
+                    if ch.get("finish_reason"):
+                        finish = ch["finish_reason"]
+        except requests.RequestException as exc:
+            raise ProviderError(TRANSIENT, f"provider stream interrupted: {exc}", retryable=True)
+        message = {"content": "".join(content),
+                   "tool_calls": [calls[i] for i in sorted(calls)] or None}
+        return {"choices": [{"message": message, "finish_reason": finish}], "usage": usage}

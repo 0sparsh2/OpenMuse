@@ -541,9 +541,10 @@ def main() -> int:
     check("no Meta trademarks or proprietary assets", not hits_banned,
           ",".join(hits_banned))
     check("original wordmark present", "OpenMuse" in corpus)
-    a11y_markers = ["skip-link", '"role"', '"aria-live"', '"aria-label"',
+    a11y_markers = ["skip-link", ('role: "', 'role="'), '"aria-live"', '"aria-label"',
                     ":focus-visible", "tabindex"]
-    missing = [m for m in a11y_markers if m not in corpus]
+    missing = [m if isinstance(m, str) else m[0] for m in a11y_markers
+               if not any(x in corpus for x in ((m,) if isinstance(m, str) else m))]
     check("keyboard/screen-reader hooks present", not missing, ",".join(missing))
 
     def luminance(hexcolor: str) -> float:

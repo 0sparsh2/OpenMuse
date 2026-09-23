@@ -61,10 +61,10 @@
     return req("POST", "/v1/sessions", { body: { title: title || "" } });
   }
 
-  async function sendMessage(chatId, text, { idempotencyKey } = {}) {
+  async function sendMessage(chatId, text, { idempotencyKey, mode } = {}) {
     const key = idempotencyKey || ("idem_" + uuid().replace(/-/g, ""));
     const body = await req("POST", "/v1/chats/" + encodeURIComponent(chatId) + "/messages", {
-      body: { content: [{ type: "text", text }] },
+      body: Object.assign({ content: [{ type: "text", text }] }, mode ? { mode } : {}),
       idempotencyKey: key,
     });
     return { idempotencyKey: key, messageId: body.message_id, runId: body.run_id,
@@ -327,7 +327,7 @@
     return { ok: false, error: "webauthn-unavailable" };
   }
 
-  async function decideApproval(card, decision, { deviceAuth } = {}) {
+  async function decideApproval(card, decision, { deviceAuth, channel } = {}) {
     if (decision !== "approve" && decision !== "deny") throw new Error("bad decision");
     if (HIGH_RISK.has(card.risk)) {
       const auth = deviceAuth || await deviceAuthenticate(
@@ -336,7 +336,7 @@
       card.deviceAuthed = true; // re-display bound fields after auth (caller renders card)
     }
     return req("POST", "/v1/approvals/" + encodeURIComponent(card.approvalId) + "/decision", {
-      body: { decision, argument_hash: card.argumentHash }, // binds to the exact hash shown
+      body: Object.assign({ decision, argument_hash: card.argumentHash }, channel ? { channel } : {}), // binds to the exact hash shown
     });
   }
 

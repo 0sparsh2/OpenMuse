@@ -29,7 +29,13 @@ from .openapi import build_openapi
 API_VERSION = "v1"
 
 
+class _ConfirmOnScreen(Exception):
+    """A voice approval for an R3+ action: must be confirmed on screen."""
+
+
 def _exc_info(exc: Exception):
+    if isinstance(exc, _ConfirmOnScreen):
+        return E.CONFIRM_ON_SCREEN
     if isinstance(exc, _NotFound):
         return E.NOT_FOUND
     if isinstance(exc, _NotPending):
@@ -91,6 +97,9 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         ("POST", r"^/v1/logins$", "logins_add", "sessions:write", False),
         ("DELETE", r"^/v1/logins/(?P<lid>lg_[a-f0-9]+)$", "logins_delete", "sessions:write", False),
         ("GET", r"^/v1/push/config$", "push_config", "sessions:read", False),
+        ("GET", r"^/v1/voice/config$", "voice_config", "sessions:read", False),
+        ("POST", r"^/v1/voice/transcribe$", "voice_transcribe", "sessions:write", False),
+        ("POST", r"^/v1/voice/speak$", "voice_speak", "sessions:write", False),
         ("POST", r"^/v1/push/subscribe$", "push_subscribe", "sessions:write", False),
         ("POST", r"^/v1/push/unsubscribe$", "push_unsubscribe", "sessions:write", False),
         ("POST", r"^/v1/push/test$", "push_test", "sessions:write", False),
@@ -352,7 +361,8 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         idem_key = self.headers.get("Idempotency-Key", "").strip()
         run, created, msg_id = self.backend.submit_message(
             chat_id=sid, user_id=session.user_id,
-            content=body.get("content", []), idempotency_key=idem_key)
+            content=body.get("content", []), idempotency_key=idem_key,
+            mode=str(body.get("mode", "")))
         return (201 if created else 200), {
             "message_id": msg_id if created else "msg_replayed",
             "run_id": run.run_id,
@@ -617,6 +627,43 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
             pass
         finally:
             self.backend._note_listeners.remove(listener)
+        return None
+
+    # -- voice (issue #19) ------------------------------------------------------------
+    def h_voice_config(self, params):
+        v = self.backend.voice
+        return 200, (v.config() if v else {"stt": None, "tts": None}), None
+
+    def _voice(self):
+        if self.backend.voice is None:
+            raise _NotFound("voice")
+        return self.backend.voice
+
+    def h_voice_transcribe(self, params):
+        import base64
+        body = self._parse_json()
+        try:
+            wav = base64.b64decode(body.get("audio_base64", ""), validate=True)
+        except Exception:
+            raise ValueError("audio_base64 is not valid base64")
+        try:
+            return 200, self._voice().transcribe(wav), None
+        except LookupError as exc:
+            raise _NotFound(str(exc))
+
+    def h_voice_speak(self, params):
+        body = self._parse_json()
+        try:
+            audio, ctype = self._voice().speak(str(body.get("text", "")))
+        except LookupError as exc:
+            raise _NotFound(str(exc))
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(audio)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Request-ID", self._request_id)
+        self.end_headers()
+        self.wfile.write(audio)
         return None
 
     # -- web push (issue #17) ---------------------------------------------------------
@@ -1076,7 +1123,11 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
             raise ValueError("decision must be 'approve' or 'deny'")
         if not body.get("argument_hash"):
             raise ValueError("argument_hash is required")
-        self._approval_for_caller(params["aid"])
+        req = self._approval_for_caller(params["aid"])
+        # Voice may only approve low-risk steps; external writes, money,
+        # credentials (R3+) are confirmed on screen where the details are.
+        if body.get("channel") == "voice" and decision == "approve" and req.risk not in ("R0", "R1", "R2"):
+            raise _ConfirmOnScreen()
         result = self.backend.decide_approval(
             params["aid"], decision=decision,
             argument_hash=body["argument_hash"],

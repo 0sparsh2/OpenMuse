@@ -59,7 +59,9 @@ def _complete_with_fallback(request, primary=None):
 
 
 def _respond(request, history):
-    resp = _complete_with_fallback(request)
+    # spoken turns: thinking off for a fast first sentence (voice mode, #19)
+    voice = request.metadata is not None and getattr(request.metadata, "mode", "") == "voice"
+    resp = _complete_with_fallback(request, primary=voice_provider if voice else None)
     if os.environ.get("OPENMUSE_DEBUG"):
         for tc in resp.tool_calls:
             print("TOOL_CALL", tc.name, json.dumps(tc.arguments)[:400], flush=True)
@@ -72,6 +74,14 @@ memory_provider = OpenAICompatProvider(
     api_key=os.environ["NVIDIA_NIM_API_KEY"],
     base_url=os.environ.get("NVIDIA_NIM_API_BASE", "https://integrate.api.nvidia.com/v1"),
     model=os.environ.get("NVIDIA_MEMORY_MODEL", os.environ["NVIDIA_MODEL"]),
+    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+)
+
+
+voice_provider = OpenAICompatProvider(
+    api_key=os.environ["NVIDIA_NIM_API_KEY"],
+    base_url=os.environ.get("NVIDIA_NIM_API_BASE", "https://integrate.api.nvidia.com/v1"),
+    model=os.environ.get("NVIDIA_VOICE_MODEL", os.environ["NVIDIA_MODEL"]),
     extra_body={"chat_template_kwargs": {"enable_thinking": False}},
 )
 
@@ -91,6 +101,15 @@ def _llm_json(system: str, user: str) -> str:
 data_root = os.environ.get("OPENMUSE_DATA", os.path.join(ROOT, ".data", "api"))
 os.makedirs(data_root, exist_ok=True)
 from memory.service import MemoryService
+
+
+def _voice():
+    if os.environ.get("OPENMUSE_VOICE", "on") == "off":
+        return None
+    from api.voice import VoiceService
+    v = VoiceService(nim_key=os.environ["NVIDIA_NIM_API_KEY"])
+    print(f"voice: stt={v.stt_name} tts={v.tts_name}", flush=True)
+    return v
 
 
 def _connectors():
@@ -126,6 +145,7 @@ backend = ApiBackend(
     enable_subagents=True,                                # helper agents, incl. parallel fan-out
     logins_key_file=os.path.join(state_root, "vault.key"),  # saved logins (encrypted at rest)
     push_key_file=os.path.join(state_root, "vapid.json"),   # web push to installed PWAs
+    voice=_voice(),                                          # speech in/out (NVIDIA Riva on NIM)
 )
 backend.proactive.start()
 backend.monitors.start()

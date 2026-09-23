@@ -92,6 +92,7 @@ class RequestMetadata:
     step: int
     prompt_version: str
     data_class: str = "personal"  # public | personal | sensitive
+    mode: str = ""  # "voice" for spoken turns
 
 
 @dataclass

@@ -31,6 +31,7 @@ APPROVAL_HASH_MISMATCH = (
 )
 APPROVAL_EXPIRED = ("APPROVAL_EXPIRED", 410, "The approval request has expired.")
 RUN_NOT_FAILED = ("RUN_NOT_FAILED", 409, "The run did not fail in a way that permits retry.")
+CONFIRM_ON_SCREEN = ("CONFIRM_ON_SCREEN", 403, "This action needs your confirmation on screen, not by voice.")
 INTERNAL_ERROR = ("INTERNAL_ERROR", 500, "An unexpected server error occurred.")
 SERVICE_UNAVAILABLE = ("SERVICE_UNAVAILABLE", 503, "The service is temporarily unavailable.")
 

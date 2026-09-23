@@ -100,6 +100,12 @@ class ContextBuilder:
                 ))
         if tool_schemas:
             system_text += "\n\n" + self._tool_addendum
+        if getattr(run, "mode", "") == "voice":
+            system_text += ("\n\nVOICE MODE: the user is talking to you and your reply is read aloud. "
+                            "Answer in one to three short, natural spoken sentences. No markdown, lists, "
+                            "tables, emoji or URLs — say \"I've put the details on screen\" instead; cards "
+                            "and results still appear on their screen. If something needs their approval, "
+                            "say briefly what it is.")
 
         messages = [ChatMessage(role="system", blocks=[Block(kind="text", text=system_text)])]
         messages.extend(memory_blocks)
@@ -111,10 +117,17 @@ class ContextBuilder:
                     blocks=[Block(kind="text", text="WORKING MEMORY (turn-scoped):\n" + wm_text)],
                 ))
         messages.extend(compact_browser_history(run.messages))  # 2,3,7,8 live here as typed blocks
+        if getattr(run, "mode", "") == "voice":
+            # last thing the model reads, so a chat full of long written answers
+            # doesn't pull a spoken reply back into lists and markdown
+            messages.append(ChatMessage(role="user", blocks=[Block(
+                kind="text", trust="user",
+                text="[Runtime note — trusted] Voice mode: your reply is spoken aloud. One to three short "
+                     "sentences, plain words — no lists, markdown, emoji or links.")]))
 
         metadata = RequestMetadata(
             tenant_id=run.tenant_id, run_id=run.run_id, step=run.step,
-            prompt_version=PROMPT_VERSION,
+            prompt_version=PROMPT_VERSION, mode=getattr(run, "mode", ""),
         )
         request = ModelRequest(
             request_id=f"{run.run_id}:step{run.step}",

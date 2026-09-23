@@ -93,6 +93,7 @@ class ApiBackend:
         enable_subagents: bool = False,
         logins_key_file: str | None = None,
         push_key_file: str | None = None,
+        voice=None,
         push_sender=None,
     ):
         self.tenant_id = tenant_id
@@ -222,6 +223,7 @@ class ApiBackend:
 
         # Saved logins + downloads for the live browser (issue #16).
         self.logins = None
+        self.voice = voice  # speech in/out for voice mode (issue #19)
         # Web Push to installed PWAs (issue #17): every notification also buzzes the user's devices
         self.push = None
         if push_key_file:
@@ -487,7 +489,7 @@ class ApiBackend:
         return blocks
 
     def submit_message(self, *, chat_id: str, user_id: str, content: list,
-                       idempotency_key: str = "") -> tuple:
+                       idempotency_key: str = "", mode: str = "") -> tuple:
         """Returns (run, created). Starts background execution for new runs."""
         msg = ChatMessage(role="user", blocks=self._blocks_from_content(content),
                           tool_calls=[])
@@ -499,6 +501,12 @@ class ApiBackend:
             budgets=self.run_budgets,
         )
         if created:
+            run.mode = mode if mode in ("voice",) else ""
+            if run.mode == "voice":
+                # spoken turns stream tokens so speech can start after the first sentence
+                from gateway import streaming
+                streaming.register(run.run_id, lambda text, step, rid=run.run_id: self.eventbus.publish(
+                    rid, "assistant.partial", {"text": text, "step": step}))
             self._run_text[run.run_id] = " ".join(
                 b.text for b in msg.blocks if b.kind == "text")[:4000]
             session = self.sessions.get(chat_id)
@@ -598,6 +606,9 @@ class ApiBackend:
             self._finish_run(run_id)
             self._record_receipt(run)
             self._notify_run_end(run)
+            if run.mode == "voice":
+                from gateway import streaming
+                streaming.unregister(run_id)
             if self.memory is not None and run.state == "COMPLETED":
                 # asynchronous by design: learning never slows the turn
                 noted = any(e.type == "tool.result" and e.payload.get("tool") == "memory.note"

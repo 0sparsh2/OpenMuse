@@ -77,6 +77,7 @@ class Run:
     final_text: str = ""
     idempotency_key: str = ""
     created_at: float = field(default_factory=time.time)
+    mode: str = ""  # "voice": spoken turn (short answers, low-latency model settings)
 
     def transition(self, new_state: str) -> None:
         if new_state not in _ALLOWED_TRANSITIONS[self.state]:

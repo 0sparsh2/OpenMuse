@@ -296,7 +296,10 @@
     const mic = el("button", { type: "button", class: "mc-icon", "aria-label": "Dictate", title: "Dictate" });
     mic.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0013 0M12 17.5V21"/></svg>';
     const send = el("button", { type: "submit", class: "mc-send", "aria-label": "Send" });
-    form.appendChild(plus); form.appendChild(input); form.appendChild(mic); form.appendChild(send);
+    const voiceBtn = el("button", { type: "button", class: "mc-icon", "aria-label": "Voice mode", title: "Voice mode" });
+    voiceBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/></svg>';
+    voiceBtn.addEventListener("click", () => VoiceMode.open());
+    form.appendChild(plus); form.appendChild(input); form.appendChild(mic); form.appendChild(voiceBtn); form.appendChild(send);
     const qnote = el("div", { class: "queued-note", hidden: true });
     const composerWrap = el("div", { class: "mc-bottom" }, [qnote, form]);
     root.appendChild(composerWrap);
@@ -1053,6 +1056,7 @@
 
     function handleEvent(run, ev) {
       const amsg = run.amsg, d = ev.data || {};
+      if (state.voiceTap) { try { state.voiceTap(ev, run); } catch (e) { /* voice UI must never break the chat */ } }
       switch (ev.name) {
         case "run.status":
           if (d.status === "AWAITING_MODEL" && !amsg.waiting) setStatus(amsg.blocks.length ? "Thinking" : "Preparing");
@@ -1173,6 +1177,7 @@
         if (b.type === "tool" && b.ok === undefined) b.ok = true;
       });
       if (activeRun === run) activeRun = null;
+      if (state.voiceTap) { try { state.voiceTap({ name: "run.finished", data: {} }, run); } catch (e) { /* ignore */ } }
       setStatus("");
       updateSend(); renderThread(); saveChats();
     }
@@ -1219,9 +1224,24 @@
       }
       const text = input.value.trim();
       if (!text) return;
+      input.value = ""; state.drafts[state.activeChat] = ""; autosize();
+      await sendText(text);
+    }
+
+    // voice mode sends through the same path so the thread shows every turn, card and approval
+    state.describeApproval = describeApproval;
+    state.sendChat = async (text, opts) => {
+      if (activeRun) {  // a new spoken request replaces whatever was still running
+        try { await API.cancelRun(activeRun.runId); } catch (e) { /* already ending */ }
+        for (let i = 0; i < 40 && activeRun; i++) await new Promise((r) => setTimeout(r, 100));
+      }
+      return sendText(text, opts);
+    };
+
+    async function sendText(text, opts) {
+      opts = opts || {};
       let chat = state.chats[state.activeChat];
       if (!chat) { await newChat(); chat = state.chats[state.activeChat]; if (!chat) return; }
-      input.value = ""; state.drafts[state.activeChat] = ""; autosize();
       if (!chat.title) chat.title = text.length > 42 ? text.slice(0, 40) + "…" : text;
       chat.messages.push({ role: "user", text, ts: Date.now() });
       const amsg = { role: "assistant", text: "", blocks: [], running: true, ts: Date.now() };
@@ -1229,14 +1249,15 @@
       renderAll();
       try {
         let res;
-        try { res = await API.sendMessage(chat.chatId, text); }
+        try { res = await API.sendMessage(chat.chatId, text, { mode: opts.mode }); }
         catch (err) {
           if (err.status !== 404) throw err;
           const s2 = await API.createSession(chat.title || "");  // backend restarted: new session
           chat.sessionId = s2.session_id; chat.chatId = s2.chat_id;
-          res = await API.sendMessage(chat.chatId, text);
+          res = await API.sendMessage(chat.chatId, text, { mode: opts.mode });
         }
         startStream(chat, amsg, res.runId);
+        return res.runId;
       } catch (err) {
         amsg.running = false;
         if (err.status) {  // backend answered with an error; don't pretend we're offline
@@ -2295,6 +2316,347 @@
     root._refresh = refresh; refresh();
   }
 
+  /* -- voice mode (issue #19): talk to OpenMuse, it talks back ------------------
+     Mic -> energy VAD (works with echo cancellation, so it can hear you over its
+     own voice) -> 16 kHz WAV -> server STT (NVIDIA Riva) or the browser's Web
+     Speech -> the normal chat send (mode "voice": short spoken answers) ->
+     sentence-chunked TTS, played in order. Speaking while it talks stops the
+     audio at once (barge-in) and captures what you say next. */
+  const VoiceMode = {
+    ui: null, cfg: null, state: "off", ctx: null, stream: null, proc: null,
+    frames: [], preroll: [], speechMs: 0, silenceMs: 0, heardAt: 0, noise: 0.004, loudRun: 0,
+    queue: [], playing: null, ttsAbort: null, pendingText: "", spoken: "", runId: null,
+    confirm: null, sr: null, stats: { turns: 0, latencies: [], bargeIns: [] },
+    YES: /^(yes|yeah|yep|yup|sure|ok(ay)?|go ahead|do it|please do|confirm|approve|sounds good)\b/i,
+    NO: /^(no|nope|don'?t|stop|cancel|deny|never ?mind|wait)\b/i,
+
+    async open() {
+      if (this.ui) return;
+      if (!this.cfg) { try { this.cfg = await API.req("GET", "/v1/voice/config"); } catch (e) { this.cfg = { stt: null, tts: null }; } }
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!this.cfg.stt && !SR) { toast("Voice needs a microphone-capable browser (or server speech set up)."); return; }
+      showTab("chat");
+      const ui = el("div", { class: "vm", role: "dialog", "aria-label": "Voice mode" });
+      ui.innerHTML = '<button type="button" class="vm-x" aria-label="End voice mode">✕</button>' +
+        '<button type="button" class="vm-orb" aria-label="Tap to talk or interrupt"><span class="vm-ring r1"></span><span class="vm-ring r2"></span><span class="vm-core"></span></button>' +
+        '<div class="vm-state" aria-live="polite"></div><div class="vm-you"></div><div class="vm-reply"></div>' +
+        '<div class="vm-acts"></div><div class="vm-lat"></div>';
+      document.body.appendChild(ui);
+      this.ui = ui;
+      ui.querySelector(".vm-x").addEventListener("click", () => this.close());
+      ui.querySelector(".vm-orb").addEventListener("click", () => this.tap());
+      document.addEventListener("keydown", this._esc = (e) => { if (e.key === "Escape") this.close(); });
+      state.voiceTap = (ev, run) => this.onEvent(ev, run);
+      try {
+        this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+      } catch (e) { this.say("I can't hear you — allow the microphone for this site."); this.set("off", "Microphone blocked"); return; }
+      const AC = window.AudioContext || window.webkitAudioContext;
+      this.ctx = new AC();
+      const src = this.ctx.createMediaStreamSource(this.stream);
+      this.proc = this.ctx.createScriptProcessor(2048, 1, 1);
+      this.proc.onaudioprocess = (e) => this.onAudio(e.inputBuffer.getChannelData(0));
+      const mute = this.ctx.createGain(); mute.gain.value = 0;
+      src.connect(this.proc); this.proc.connect(mute); mute.connect(this.ctx.destination);
+      this.listen();
+    },
+
+    close() {
+      if (!this.ui) return;
+      this.stopAudio();
+      if (this.sr) { try { this.sr.abort(); } catch (e) { /* ignore */ } this.sr = null; }
+      if (this.proc) this.proc.disconnect();
+      if (this.stream) this.stream.getTracks().forEach((t) => t.stop());
+      if (this.ctx) this.ctx.close().catch(() => {});
+      document.removeEventListener("keydown", this._esc);
+      this.ui.remove();
+      Object.assign(this, { ui: null, ctx: null, stream: null, proc: null, state: "off", confirm: null, runId: null });
+      state.voiceTap = null;
+    },
+
+    set(st, label) {
+      this.state = st;
+      if (!this.ui) return;
+      this.ui.dataset.state = st;
+      this.ui.querySelector(".vm-state").textContent = label != null ? label :
+        ({ listening: "Listening…", hearing: "Listening…", thinking: "Thinking…", speaking: "Speaking — talk to interrupt",
+           idle: "Tap to talk", off: "" })[st] || "";
+    },
+
+    listen() {
+      this.frames = []; this.speechMs = 0; this.silenceMs = 0; this.loudRun = 0; this.heardAt = 0;
+      if (this.spec) { this.spec.abort.abort(); this.spec = null; }
+      this.listenStarted = performance.now();
+      this.set("listening");
+      if (!this.cfg.stt) this.startWebSpeech();
+    },
+
+    tap() {
+      if (this.state === "speaking" || this.state === "thinking") { this.interrupt("tap"); return; }
+      if (this.state === "hearing") { this.endUtterance(); return; }
+      if (this.state === "idle" || this.state === "off") this.listen();
+    },
+
+    // -- capture + VAD --------------------------------------------------------------
+    onAudio(buf) {
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+      const rms = Math.sqrt(sum / buf.length);
+      const frameMs = buf.length / this.ctx.sampleRate * 1000;
+      const speaking = this.state === "speaking";
+      const thr = Math.max(0.012, this.noise * 3) * (speaking ? 2.2 : 1);   // its own (echo-cancelled) voice needs a higher bar
+      const loud = rms > thr;
+      if (!loud && this.state !== "hearing") this.noise = this.noise * 0.95 + rms * 0.05;
+      if (this.ui) this.ui.style.setProperty("--lvl", Math.min(1, rms * 12).toFixed(3));
+      const copy = new Float32Array(buf);
+      if (this.state === "listening" || this.state === "speaking" || this.state === "thinking" || this.state === "idle") {
+        this.preroll.push(copy); if (this.preroll.length > 8) this.preroll.shift();       // ~350 ms before speech
+        this.loudRun = loud ? this.loudRun + frameMs : 0;
+        if (this.loudRun >= 120) {                                                       // ~3 frames of voice
+          if (speaking || this.state === "thinking") this.interrupt("voice");
+          if (this.state !== "listening" && this.state !== "idle") return;
+          this.frames = this.preroll.slice(); this.preroll = [];
+          this.speechMs = this.loudRun; this.silenceMs = 0; this.heardAt = this.lastLoudAt = performance.now();
+          this.set("hearing");
+        } else if (this.state === "listening" && performance.now() - this.listenStarted > 12000) {
+          this.set("idle");                                                             // nobody spoke: stop waiting
+        }
+        return;
+      }
+      if (this.state === "hearing") {
+        this.frames.push(copy);
+        if (loud) {
+          this.speechMs += frameMs; this.silenceMs = 0; this.lastLoudAt = performance.now();
+          if (this.spec) { this.spec.abort.abort(); this.spec = null; }   // still talking: drop the early guess
+        } else this.silenceMs += frameMs;
+        // speculative transcription: start ASR on a short pause; if they keep
+        // talking it's discarded, if not the text is (nearly) ready at end of turn
+        if (!this.spec && this.cfg.stt && this.silenceMs >= 350 && this.speechMs >= 250) this.spec = this.transcribe();
+        if (this.silenceMs >= 600 || this.speechMs > 30000) this.endUtterance();
+      }
+    },
+
+    wav16k() {
+      const rate = this.ctx.sampleRate, ratio = rate / 16000;
+      const total = this.frames.reduce((n, f) => n + f.length, 0);
+      const flat = new Float32Array(total); let o = 0;
+      this.frames.forEach((f) => { flat.set(f, o); o += f.length; });
+      const n = Math.floor(total / ratio), pcm = new Int16Array(n);
+      for (let i = 0; i < n; i++) {
+        const a = Math.floor(i * ratio), b = Math.min(total, Math.floor((i + 1) * ratio));
+        let s = 0; for (let j = a; j < b; j++) s += flat[j];
+        const v = Math.max(-1, Math.min(1, s / Math.max(1, b - a)));
+        pcm[i] = v < 0 ? v * 0x8000 : v * 0x7fff;
+      }
+      const out = new DataView(new ArrayBuffer(44 + pcm.length * 2));
+      const w = (off, s) => { for (let i = 0; i < s.length; i++) out.setUint8(off + i, s.charCodeAt(i)); };
+      w(0, "RIFF"); out.setUint32(4, 36 + pcm.length * 2, true); w(8, "WAVE"); w(12, "fmt ");
+      out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true);
+      out.setUint32(24, 16000, true); out.setUint32(28, 32000, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true);
+      w(36, "data"); out.setUint32(40, pcm.length * 2, true);
+      for (let i = 0; i < pcm.length; i++) out.setInt16(44 + i * 2, pcm[i], true);
+      return new Uint8Array(out.buffer);
+    },
+
+    async endUtterance() {
+      if (this.state !== "hearing") return;
+      this.endedAt = this.lastLoudAt || performance.now();   // latency counts from the end of speech, not the VAD's hangover
+      if (!this.cfg.stt) { if (this.sr) this.sr.stop(); this.set("thinking"); return; }   // Web Speech delivers the text
+      if (this.speechMs < 250) { this.spec = null; this.listen(); return; }            // a cough, not a request
+      this.set("thinking", "Got it…");
+      const job = this.spec || this.transcribe();
+      this.spec = null; this.frames = [];
+      try { this.heard((await job.result).text || ""); }
+      catch (e) { if (this.ui) this.say("Sorry, I didn't catch that."); }
+    },
+
+    transcribe() {
+      const bytes = this.wav16k();
+      let bin = ""; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      const abort = new AbortController();
+      const h = { "Content-Type": "application/json" };
+      if (API.store.apiKey) h["Authorization"] = "Bearer " + API.store.apiKey;
+      const result = fetch("/v1/voice/transcribe", { method: "POST", headers: h, body: JSON.stringify({ audio_base64: btoa(bin) }), signal: abort.signal })
+        .then((r) => { if (!r.ok) throw new Error("stt " + r.status); return r.json(); });
+      result.catch(() => {});                                  // an aborted guess isn't an error
+      return { abort, result };
+    },
+
+    startWebSpeech() {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR || this.sr) return;
+      const sr = new SR(); sr.lang = navigator.language || "en-US"; sr.interimResults = true; sr.continuous = false;
+      let finalText = "";
+      sr.onresult = (e) => {
+        const t = Array.from(e.results).map((r) => r[0].transcript).join("");
+        if (this.ui) this.ui.querySelector(".vm-you").textContent = t;
+        if (e.results[e.results.length - 1].isFinal) finalText = t;
+      };
+      sr.onend = () => { this.sr = null; if (!this.endedAt) this.endedAt = performance.now(); if (finalText) this.heard(finalText); else if (this.state !== "off" && this.state !== "speaking") this.set("idle"); };
+      this.sr = sr; this.endedAt = 0;
+      try { sr.start(); } catch (e) { this.sr = null; }
+    },
+
+    // -- a finished utterance -----------------------------------------------------------
+    async heard(text) {
+      text = (text || "").trim();
+      if (!this.ui) return;
+      if (!text) { this.listen(); return; }
+      this.ui.querySelector(".vm-you").textContent = text;
+      this.ui.querySelector(".vm-reply").textContent = "";
+      this.ui.querySelector(".vm-acts").innerHTML = "";
+      if (this.confirm) {                                   // answering "should I go ahead?"
+        const card = this.confirm; this.confirm = null;
+        if (this.YES.test(text) || this.NO.test(text)) {
+          const yes = this.YES.test(text);
+          try {
+            await API.decideApproval(card, yes ? "approve" : "deny", { channel: "voice" });
+            this.say(yes ? "Okay, doing it." : "Okay, I won't.", true);
+          } catch (e) { this.say("I need you to confirm that on screen."); this.showReview(); }
+          return;
+        }
+      }
+      this.set("thinking");
+      this.pendingText = ""; this.spoken = ""; this.firstAudioLogged = false; this.stepNo = null; this.stepText = "";
+      try { this.runId = await state.sendChat(text, { mode: "voice" }); }
+      catch (e) { this.say("Something went wrong sending that."); }
+    },
+
+    onEvent(ev, run) {
+      if (!this.ui || !run || run.runId !== this.runId) return;
+      const d = ev.data || {};
+      if (ev.name === "approval.required") {
+        API.getApproval(d.approval_id).then((card) => {
+          const desc = state.describeApproval ? state.describeApproval(card) : { title: "OpenMuse needs your OK" };
+          const what = desc.title.replace(/^OpenMuse wants to /, "");
+          if (["R0", "R1", "R2"].includes(card.risk)) {
+            this.confirm = card;
+            this.say("Should I " + what + "?", true);
+          } else {
+            this.say("I need your OK on screen to " + what + ".");
+            this.showReview();
+          }
+        }).catch(() => {});
+      } else if (ev.name === "assistant.partial") {           // live tokens (voice runs stream)
+        if (d.step !== this.stepNo) { this.stepNo = d.step; this.stepText = ""; }
+        this.stepText += d.text || "";
+        this.feed(d.text || "", false);
+      } else if (ev.name === "assistant.delta") {             // the final answer, all at once
+        const full = d.text || d.delta || "";
+        if (this.stepText && full.startsWith(this.stepText)) this.feed(full.slice(this.stepText.length), false);
+        else if (!this.stepText) this.feed(full, false);
+      } else if (ev.name === "run.completed") {
+        this.feed("", true);
+      } else if (ev.name === "run.failed") {
+        this.say("Sorry — that didn't work.");
+      } else if (ev.name === "run.finished") {
+        if (this.state === "thinking" && !this.queue.length && !this.playing && !this.confirm) this.listen();
+      }
+    },
+
+    // -- speaking ------------------------------------------------------------------------
+    feed(delta, final) {
+      this.pendingText += delta;
+      const parts = [];
+      let m;
+      // mid-stream a sentence ends only once whitespace follows ("3." might become "3.5")
+      const re = final ? /[^.!?]*[.!?]+(?:["')\]]*)(?=\s|$)/g : /[^.!?]*[.!?]+(?:["')\]]*)(?=\s)/g;
+      let last = 0;
+      while ((m = re.exec(this.pendingText))) { parts.push(m[0]); last = re.lastIndex; }
+      let rest = this.pendingText.slice(last);
+      if (final && rest.trim()) { parts.push(rest); rest = ""; }
+      this.pendingText = rest;
+      // merge tiny fragments so each TTS call carries a natural phrase
+      const chunks = [];
+      parts.forEach((p) => { if (chunks.length && chunks[chunks.length - 1].length < 40) chunks[chunks.length - 1] += p; else chunks.push(p); });
+      chunks.forEach((c) => { if (c.trim()) this.enqueue(c.trim()); });
+      if (this.ui) this.ui.querySelector(".vm-reply").textContent = (this.spoken + this.pendingText).trim();
+    },
+
+    say(text, thenListen) {
+      this.stopAudio();
+      this.pendingText = ""; this.spoken = "";
+      this.enqueue(text, thenListen !== false);
+      if (this.ui) this.ui.querySelector(".vm-reply").textContent = text;
+    },
+
+    enqueue(text) {
+      this.spoken += (this.spoken ? " " : "") + text;
+      if (!this.ttsAbort) this.ttsAbort = new AbortController();
+      const signal = this.ttsAbort.signal;
+      const item = { text };
+      if (this.cfg.tts) {
+        const h = { "Content-Type": "application/json" };
+        if (API.store.apiKey) h["Authorization"] = "Bearer " + API.store.apiKey;
+        item.audio = fetch("/v1/voice/speak", { method: "POST", headers: h, body: JSON.stringify({ text }), signal })
+          .then((r) => r.ok ? r.blob() : null).catch(() => null);
+      }
+      this.queue.push(item);
+      if (!this.playing) this.playNext();
+    },
+
+    async playNext() {
+      const item = this.queue.shift();
+      if (!item) {
+        this.playing = null;
+        if (this.ui && this.state === "speaking") this.listen();
+        return;
+      }
+      this.playing = item;
+      const started = () => {
+        if (this.state !== "speaking") this.set("speaking");
+        if (!this.firstAudioLogged && this.endedAt) {
+          this.firstAudioLogged = true;
+          const ms = Math.round(performance.now() - this.endedAt);
+          this.stats.latencies.push(ms); this.stats.turns++;
+          if (this.ui) this.ui.querySelector(".vm-lat").textContent = (ms / 1000).toFixed(1) + "s";
+        }
+      };
+      const blob = item.audio ? await item.audio : null;
+      if (this.playing !== item) return;                                   // interrupted while fetching
+      if (blob) {
+        const a = new Audio(URL.createObjectURL(blob));
+        item.el = a;
+        a.addEventListener("playing", started, { once: true });
+        a.addEventListener("ended", () => { URL.revokeObjectURL(a.src); if (this.playing === item) this.playNext(); });
+        a.addEventListener("error", () => { if (this.playing === item) this.playNext(); });
+        a.play().catch(() => { if (this.playing === item) this.playNext(); });
+      } else if (window.speechSynthesis) {
+        const u = new SpeechSynthesisUtterance(item.text);
+        u.onstart = started;
+        u.onend = u.onerror = () => { if (this.playing === item) this.playNext(); };
+        item.utter = u;
+        speechSynthesis.speak(u);
+      } else this.playNext();
+    },
+
+    stopAudio() {
+      if (this.ttsAbort) { this.ttsAbort.abort(); this.ttsAbort = null; }
+      const p = this.playing; this.playing = null; this.queue = [];
+      if (p && p.el) { p.el.pause(); p.el.src = ""; }
+      if (window.speechSynthesis) speechSynthesis.cancel();
+    },
+
+    interrupt(how) {
+      const t0 = performance.now();
+      const wasSpeaking = this.state === "speaking";
+      this.stopAudio();
+      this.pendingText = ""; this.spoken = "";
+      if (wasSpeaking) this.stats.bargeIns.push({ how, stopMs: Math.round(performance.now() - t0), at: Date.now() });
+      this.runId = null;                        // ignore the rest of that answer; the next utterance takes over
+      this.listen();
+    },
+
+    showReview() {
+      if (!this.ui) return;
+      const acts = this.ui.querySelector(".vm-acts");
+      acts.innerHTML = "";
+      const b = el("button", { type: "button", class: "btn", text: "Review on screen" });
+      b.addEventListener("click", () => this.close());
+      acts.appendChild(b);
+    },
+  };
+  window.__omVoice = VoiceMode;
+
   /* -- installed app (issue #17): service worker, web push, share target ------ */
   const Push = {
     reg: null, cfg: null, sub: null,
@@ -2594,63 +2956,19 @@
   /* -- voice view --------------------------------------------------------------------------- */
   function voiceView(root) {
     root.innerHTML = "";
-    root.appendChild(el("h1", { text: "Voice" }));
-    const card = el("div", { class: "card" });
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const status = el("p", { class: "muted", text: SR ? "Ready — press and talk." : "Speech recognition is not available in this browser." });
-    card.appendChild(status);
-    const transcript = el("div", { class: "thread", "aria-live": "polite" });
-    card.appendChild(transcript);
-    const row = el("div", { class: "form-row" });
-    const talk = el("button", { class: "btn", type: "button", text: "Push to talk", disabled: !SR });
-    const speak = el("button", { class: "btn secondary", type: "button", text: "Read last reply aloud" });
-    row.appendChild(talk); row.appendChild(speak);
-    card.appendChild(row);
-    root.appendChild(card);
-
-    let rec = null;
-    talk.addEventListener("click", () => {
-      if (!SR) return;
-      if (rec) { rec.stop(); rec = null; talk.textContent = "Push to talk"; return; }
-      rec = new SR();
-      rec.lang = "en-US"; rec.interimResults = false;
-      rec.onresult = (e) => {
-        const text = e.results[0][0].transcript;
-        const m = el("div", { class: "msg user" });
-        m.appendChild(el("span", { class: "role", text: "You (voice)" }));
-        const d = el("div", {}); d.textContent = text; m.appendChild(d);
-        transcript.appendChild(m);
-        // route the transcript as an ordinary chat turn
-        const chat = state.chats[state.activeChat];
-        if (chat && !chat.offline) {
-          API.sendMessage(chat.chatId, text).then((res) => {
-            const am = el("div", { class: "msg assistant" });
-            am.appendChild(el("span", { class: "role", text: "OpenMuse" }));
-            const ad = el("div", { text: "…" }); am.appendChild(ad);
-            transcript.appendChild(am);
-            window._lastReply = ad;
-            API.streamRun(res.runId, {
-              onEvent: (ev) => {
-                if (ev.name === "assistant.delta" && ev.data.delta) ad.textContent += ev.data.delta;
-                if (ev.name === "run.completed") ad.textContent = ev.data.final_text || ad.textContent;
-              },
-            }).catch(() => {});
-          }).catch(() => toast("Voice send failed."));
-        }
-      };
-      rec.onend = () => { rec = null; talk.textContent = "Push to talk"; };
-      rec.start();
-      talk.textContent = "Stop";
-    });
-    speak.addEventListener("click", () => {
-      const last = window._lastReply;
-      if (!last || !last.textContent.trim() || !("speechSynthesis" in window)) {
-        toast("Nothing to read aloud."); return;
-      }
-      speechSynthesis.cancel();
-      speechSynthesis.speak(new SpeechSynthesisUtterance(last.textContent));
-    });
+    root.classList.add("memv");
+    root.appendChild(el("div", { class: "memv-head", html: "<h1>Voice</h1><p class='muted'>Talk to OpenMuse and hear it answer. Interrupt any time by speaking. Anything that sends, buys or signs in still needs your OK on screen.</p>" }));
+    const go = el("button", { type: "button", class: "btn", text: "Start voice mode" });
+    go.addEventListener("click", () => VoiceMode.open());
+    root.appendChild(go);
+    const info = el("p", { class: "memv-meta" });
+    root.appendChild(info);
+    API.req("GET", "/v1/voice/config").then((c) => {
+      VoiceMode.cfg = c;
+      info.textContent = "Listening: " + (c.stt ? c.stt.replace(/-/g, " ") : "your browser") + " · Speaking: " + (c.tts ? c.tts.replace(/-/g, " ") : "your browser");
+    }).catch(() => { info.textContent = "Using your browser's speech."; });
   }
+
 
   const VIEWS = {
     chat: { render: chatView },
