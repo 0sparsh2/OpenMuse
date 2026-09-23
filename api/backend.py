@@ -92,6 +92,8 @@ class ApiBackend:
         proactive_llm=None,
         enable_subagents: bool = False,
         logins_key_file: str | None = None,
+        push_key_file: str | None = None,
+        push_sender=None,
     ):
         self.tenant_id = tenant_id
         self.workspace_root = workspace_root
@@ -220,6 +222,11 @@ class ApiBackend:
 
         # Saved logins + downloads for the live browser (issue #16).
         self.logins = None
+        # Web Push to installed PWAs (issue #17): every notification also buzzes the user's devices
+        self.push = None
+        if push_key_file:
+            from api.push import PushService
+            self.push = PushService(self, key_file=push_key_file, sender=push_sender)
         if logins_key_file and browser_operator is not None and hasattr(browser_operator, "credential_resolver"):
             from browser.logins import LoginVault
             self.logins = LoginVault(self, key=os.environ.get("OPENMUSE_VAULT_KEY", ""), key_file=logins_key_file)

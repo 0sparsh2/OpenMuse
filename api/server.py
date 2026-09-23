@@ -90,6 +90,10 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         ("GET", r"^/v1/logins$", "logins_list", "sessions:read", False),
         ("POST", r"^/v1/logins$", "logins_add", "sessions:write", False),
         ("DELETE", r"^/v1/logins/(?P<lid>lg_[a-f0-9]+)$", "logins_delete", "sessions:write", False),
+        ("GET", r"^/v1/push/config$", "push_config", "sessions:read", False),
+        ("POST", r"^/v1/push/subscribe$", "push_subscribe", "sessions:write", False),
+        ("POST", r"^/v1/push/unsubscribe$", "push_unsubscribe", "sessions:write", False),
+        ("POST", r"^/v1/push/test$", "push_test", "sessions:write", False),
         ("GET", r"^/v1/goals$", "goals_list", "sessions:read", False),
         ("POST", r"^/v1/goals$", "goals_create", "sessions:write", False),
         ("PATCH", r"^/v1/goals/(?P<gid>goal_[a-f0-9]+)$", "goals_update", "sessions:write", False),
@@ -614,6 +618,30 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         finally:
             self.backend._note_listeners.remove(listener)
         return None
+
+    # -- web push (issue #17) ---------------------------------------------------------
+    def _push(self):
+        if self.backend.push is None:
+            raise _NotFound("push")
+        return self.backend.push
+
+    def h_push_config(self, params):
+        p = self.backend.push
+        return 200, {"enabled": p is not None, "public_key": p.public_key if p else None,
+                     "devices": len(p.subscriptions(self._uid())) if p else 0}, None
+
+    def h_push_subscribe(self, params):
+        b = self._parse_json()
+        rec = self._push().subscribe(self._uid(), b.get("subscription") or {}, device=str(b.get("device", "")))
+        return 201, {"subscription": rec}, None
+
+    def h_push_unsubscribe(self, params):
+        b = self._parse_json()
+        return 200, {"removed": self._push().unsubscribe(self._uid(), str(b.get("endpoint", "")))}, None
+
+    def h_push_test(self, params):
+        return 200, self._push().send(self._uid(), {"title": "OpenMuse", "body": "Notifications are on for this device.",
+                                                    "url": "/", "tag": "push-test"}), None
 
     # -- saved logins (issue #16) — passwords go in, never come out -------------------
     def _vault(self):

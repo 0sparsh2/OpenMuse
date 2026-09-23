@@ -125,6 +125,7 @@ backend = ApiBackend(
     enable_proactive=True, proactive_llm=_llm_json,      # goals, ideas (+ generator), feed
     enable_subagents=True,                                # helper agents, incl. parallel fan-out
     logins_key_file=os.path.join(state_root, "vault.key"),  # saved logins (encrypted at rest)
+    push_key_file=os.path.join(state_root, "vapid.json"),   # web push to installed PWAs
 )
 backend.proactive.start()
 backend.monitors.start()

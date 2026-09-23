@@ -300,6 +300,7 @@
     const qnote = el("div", { class: "queued-note", hidden: true });
     const composerWrap = el("div", { class: "mc-bottom" }, [qnote, form]);
     root.appendChild(composerWrap);
+    state.prefillChat = (t) => { input.value = t; input.dispatchEvent(new Event("input")); input.focus(); };
 
     let activeRun = null;  // {runId, amsg, chat, abort}
 
@@ -2294,6 +2295,117 @@
     root._refresh = refresh; refresh();
   }
 
+  /* -- installed app (issue #17): service worker, web push, share target ------ */
+  const Push = {
+    reg: null, cfg: null, sub: null,
+    supported() { return "serviceWorker" in navigator && "PushManager" in window && window.Notification && window.isSecureContext; },
+    async init() {
+      if (!("serviceWorker" in navigator) || !window.isSecureContext) return;
+      try { this.reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" }); } catch (e) { return; }
+      navigator.serviceWorker.addEventListener("message", (e) => {
+        if (e.data && e.data.type === "open-note" && e.data.note_id) Notes.openById(e.data.note_id);
+      });
+      if (!this.supported()) return;
+      try { this.cfg = await API.req("GET", "/v1/push/config"); } catch (e) { this.cfg = null; }
+      try { const ready = await navigator.serviceWorker.ready; this.sub = await ready.pushManager.getSubscription(); } catch (e) { this.sub = null; }
+      // re-register an existing device subscription (e.g. after a server reset or a new sign-in)
+      if (this.sub && this.cfg && this.cfg.enabled && Notification.permission === "granted") this.save(this.sub).catch(() => {});
+    },
+    b64ToBytes(b64) {
+      const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+      const raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+      return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+    },
+    device() { const ua = navigator.userAgent; return (/iPhone|iPad/.test(ua) ? "iPhone/iPad" : /Android/.test(ua) ? "Android" : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : "Browser"); },
+    save(sub) { return API.req("POST", "/v1/push/subscribe", { body: { subscription: sub.toJSON(), device: this.device() } }); },
+    async enable() {
+      if (await Notification.requestPermission() !== "granted") { toast("Notifications are blocked for this site — allow them in your browser settings."); return; }
+      const ready = await navigator.serviceWorker.ready;
+      this.sub = await ready.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: this.b64ToBytes(this.cfg.public_key) });
+      await this.save(this.sub);
+      toast("Notifications are on for this device.");
+    },
+    async disable() {
+      if (!this.sub) return;
+      const endpoint = this.sub.endpoint;
+      try { await this.sub.unsubscribe(); } catch (e) { /* already gone */ }
+      await API.req("POST", "/v1/push/unsubscribe", { body: { endpoint } }).catch(() => {});
+      this.sub = null;
+      toast("Notifications are off for this device.");
+    },
+    renderToggle(panel, rerender) {
+      const mk = (text, fn, cls) => {
+        const b = el("button", { type: "button", class: "notif-enable " + (cls || ""), text });
+        b.addEventListener("click", async (e) => { e.stopPropagation(); b.disabled = true; try { await fn(); } catch (err) { toast(err.message); } rerender(); });
+        panel.appendChild(b);
+      };
+      if (this.supported() && this.cfg && this.cfg.enabled) {
+        if (!this.sub) {
+          const ios = /iPhone|iPad/.test(navigator.userAgent) && !window.matchMedia("(display-mode: standalone)").matches;
+          if (ios) panel.appendChild(el("div", { class: "drawer-empty", text: "On iPhone: tap Share → Add to Home Screen, then open OpenMuse from there to turn on notifications." }));
+          else mk("Get notifications on this device — even when OpenMuse is closed", () => this.enable(), "push");
+        } else {
+          mk("Notifications on for this device · Send a test", () => API.req("POST", "/v1/push/test", { body: {} }), "push");
+          mk("Turn off on this device", () => this.disable(), "push");
+        }
+      } else if (window.Notification && Notification.permission === "default") {
+        mk("Enable desktop alerts when this tab is in the background", () => Notification.requestPermission());
+      }
+    },
+  };
+
+  async function shareLanding() {
+    const q = new URLSearchParams(location.search);
+    const note = q.get("note");
+    if (note) Notes.openById(note);
+    if (q.has("note") || q.has("share") || q.has("source")) history.replaceState(null, "", "/");
+    if (q.get("share") === "unsupported") { toast("Open OpenMuse once more, then share again."); return; }
+    if (q.get("share") !== "1" || !("caches" in window)) return;
+    let meta = null, files = [];
+    try {
+      const c = await caches.open("om-share");
+      const m = await c.match("/__share/meta");
+      if (m) {
+        meta = await m.json();
+        for (const f of meta.files) { const r = await c.match("/__share/file/" + f.i); if (r) files.push({ name: f.name, type: f.type, blob: await r.blob() }); }
+      }
+      await Promise.all((await c.keys()).map((k) => c.delete(k)));  // one-shot: don't keep shared content around
+    } catch (e) { meta = null; }
+    if (!meta) return;
+    const link = meta.url || ((meta.text || "").match(/https?:\/\/\S+/) || [""])[0];
+    const text = [meta.title, meta.text && meta.text !== link ? meta.text : "", link].filter(Boolean).join("\n");
+    const sheet = el("div", { class: "share-sheet", role: "dialog", "aria-label": "Shared with OpenMuse" });
+    sheet.appendChild(el("h2", { text: "Shared with OpenMuse" }));
+    sheet.appendChild(el("div", { class: "share-what", text: [text, ...files.map((f) => "📎 " + f.name)].filter(Boolean).join("\n") }));
+    const acts = el("div", { class: "share-acts" });
+    sheet.appendChild(acts);
+    const close = () => sheet.remove();
+    async function upload(f) {
+      const buf = new Uint8Array(await f.blob.arrayBuffer());
+      let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+      return (await API.req("POST", "/v1/library", { body: { name: f.name, content_base64: btoa(bin) } })).document || {};
+    }
+    const mk = (label, fn, cls) => {
+      const b = el("button", { type: "button", class: "btn " + (cls || ""), text: label });
+      b.addEventListener("click", async () => { $$("button", acts).forEach((x) => { x.disabled = true; }); try { await fn(); close(); } catch (e) { toast((e.body && e.body.error && e.body.error.message) || e.message); $$("button", acts).forEach((x) => { x.disabled = false; }); } });
+      acts.appendChild(b);
+    };
+    mk("Ask OpenMuse about this", async () => {
+      const names = [];
+      for (const f of files) { await upload(f); names.push(f.name); }
+      showTab("chat");
+      if (state.prefillChat) state.prefillChat((text ? text + "\n\n" : "") + (names.length ? "(In my Library: " + names.join(", ") + ") " : ""));
+    });
+    mk("Remember this", async () => {
+      for (const f of files) { const d = await upload(f); if (d.artifact_id) await API.req("POST", "/v1/library/" + d.artifact_id + "/memory", { body: {} }); }
+      if (text) await API.memory.addDocument({ title: (meta.title || link || text).slice(0, 120), text });
+      toast("Saved to memory — OpenMuse can use it from now on.");
+    }, "secondary");
+    if (files.length) mk("Just save to Library", async () => { for (const f of files) await upload(f); toast("Saved to your Library."); }, "secondary");
+    mk("Cancel", async () => {}, "secondary");
+    document.body.appendChild(sheet);
+  }
+
   /* -- notifications (issue #5): bell, panel, live stream -------------------- */
   const Notes = {
     items: [],
@@ -2327,6 +2439,11 @@
       document.body.appendChild(panel);
       this.renderPanel(panel);
     },
+    async openById(id) {
+      let note = this.items.find((n) => n.id === id);
+      if (!note) { await this.load(); note = this.items.find((n) => n.id === id); }
+      if (note) this.open(note);
+    },
     async open(note) {
       $(".notif-panel") && $(".notif-panel").remove();
       if (!note.read_at) { note.read_at = Date.now() / 1000; this.renderDot(); API.notifications.read(note.id).catch(() => {}); }
@@ -2342,11 +2459,7 @@
       all.addEventListener("click", async (e) => { e.stopPropagation(); await API.notifications.readAll(); this.items.forEach((n) => { n.read_at = n.read_at || Date.now() / 1000; }); this.renderDot(); this.renderPanel(panel); });
       head.appendChild(all);
       panel.appendChild(head);
-      if (window.Notification && Notification.permission === "default") {
-        const en = el("button", { type: "button", class: "notif-enable", text: "Enable desktop alerts when this tab is in the background" });
-        en.addEventListener("click", async (e) => { e.stopPropagation(); await Notification.requestPermission(); this.renderPanel(panel); });
-        panel.appendChild(en);
-      }
+      Push.renderToggle(panel, () => this.renderPanel(panel));
       if (!this.items.length) { panel.appendChild(el("div", { class: "drawer-empty", text: "You're all caught up." })); return; }
       let group = "";
       this.items.slice(0, 40).forEach((n) => {
@@ -2624,6 +2737,6 @@
   }
   document.addEventListener("DOMContentLoaded", () => {
     if (oauthLanding()) return;
-    authGate().then(() => { renderUserBox(); boot(); Notes.start(); });
+    authGate().then(() => { renderUserBox(); boot(); Notes.start(); Push.init(); shareLanding(); });
   });
 })();

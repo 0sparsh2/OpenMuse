@@ -33,6 +33,7 @@ MIME = {
     ".json": "application/json",
     ".svg": "image/svg+xml",
     ".png": "image/png",
+    ".webmanifest": "application/manifest+json",
 }
 
 
@@ -188,8 +189,22 @@ class UiHandler(BaseHTTPRequestHandler):
         try:
             if path == "/" or path == "/index.html":
                 return self._serve_static("index.html")
-            if path.startswith("/css/") or path.startswith("/js/"):
+            if path.startswith("/css/") or path.startswith("/js/") or path.startswith("/icons/"):
                 return self._serve_static(path.lstrip("/"))
+            if path in ("/manifest.webmanifest", "/sw.js"):
+                # the worker must always be re-fetched so app updates land
+                return self._serve_static(path.lstrip("/"), extra={"Cache-Control": "no-cache"})
+            if path == "/share":
+                # share target without a service worker (first launch): the SW
+                # normally handles this; just open the app
+                n = int(self.headers.get("Content-Length", 0) or 0)
+                while n > 0:
+                    n -= len(self.rfile.read(min(n, 1 << 16)) or b"x" * n)
+                self.send_response(303)
+                self.send_header("Location", "/?share=unsupported")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             if path.startswith("/vault/capture/"):
                 return self._vault_capture(path)
             if path == "/v1" or path.startswith("/v1/") or path == "/openapi.json":
@@ -207,13 +222,13 @@ class UiHandler(BaseHTTPRequestHandler):
             self._send_error(500, "INTERNAL_ERROR", "request failed")
 
     # -- static ---------------------------------------------------------------
-    def _serve_static(self, rel: str) -> None:
+    def _serve_static(self, rel: str, extra: dict | None = None) -> None:
         full = os.path.normpath(os.path.join(WEB_ROOT, rel))
         if not full.startswith(WEB_ROOT) or not os.path.isfile(full):
             return self._send_error(404, "NOT_FOUND", "no such file")
         ext = os.path.splitext(full)[1]
         with open(full, "rb") as f:
-            self._send(200, f.read(), MIME.get(ext, "application/octet-stream"))
+            self._send(200, f.read(), MIME.get(ext, "application/octet-stream"), extra)
 
     # -- reverse proxy to the real API ----------------------------------------
     _FWD_HEADERS = ("authorization", "idempotency-key", "content-type",

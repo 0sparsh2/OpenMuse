@@ -595,3 +595,34 @@ body { background: linear-gradient(135deg, #fbf7ef 0%, #f3f1fb 45%, #e3f0fc 100%
 .mc-plan li em { display: block; margin-left: 0; }
 .mc-plan li { display: grid; grid-template-columns: 14px 1fr; column-gap: 8px; }
 .mc-plan li em { grid-column: 2; }
+
+/* -- installed app / phones (issue #17) ---------------------------------- */
+.top-btn { top: calc(14px + env(safe-area-inset-top)); }
+.notif-panel { top: calc(66px + env(safe-area-inset-top)); }
+.mc-header { padding-top: calc(12px + env(safe-area-inset-top)); }
+.drawer { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+.bv-stage img { touch-action: pinch-zoom; }
+.notif-enable.push { margin-top: 6px; }
+@media (max-width: 640px) {
+  .btn.small { min-height: 44px; padding-inline: 14px; }
+  .bv-modal { padding: 0; }
+  .bv-panel { width: 100%; height: 100dvh; border-radius: 0; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  .bv-x { width: 44px; height: 44px; }
+  .bv-take { min-height: 44px; }
+  .bv-bar { flex-wrap: wrap; }
+  .bv-url { order: 3; flex-basis: 100%; }
+  .bv-body { grid-template-rows: auto 1fr; }
+  .bv-stage { overflow: auto; -webkit-overflow-scrolling: touch; }
+  .bv-side { min-height: 140px; }
+  .bv-type input { min-height: 44px; font-size: 16px; } /* 16px: no iOS zoom-on-focus */
+  .mc-composer textarea, .memv input, .memv select { font-size: 16px; }
+}
+@media (display-mode: standalone) { .skip-link { display: none; } }
+
+/* share sheet (share target) */
+.share-sheet { position: fixed; inset: auto 0 0 0; z-index: 80; background: var(--mc-pill); border-radius: 22px 22px 0 0;
+  box-shadow: 0 -20px 50px rgba(0,0,0,.2); padding: 18px 18px calc(18px + env(safe-area-inset-bottom)); max-width: 560px; margin: 0 auto; }
+.share-sheet h2 { font-size: 17px; margin: 0 0 8px; }
+.share-sheet .share-what { color: var(--mc-muted); font-size: 14px; margin-bottom: 14px; word-break: break-word; max-height: 120px; overflow: auto; }
+.share-sheet .share-acts { display: grid; gap: 8px; }
+.share-sheet .share-acts button { min-height: 46px; }
