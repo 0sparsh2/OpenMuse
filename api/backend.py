@@ -90,6 +90,7 @@ class ApiBackend:
         library_root: str | None = None,
         enable_proactive: bool = False,
         proactive_llm=None,
+        enable_subagents: bool = False,
     ):
         self.tenant_id = tenant_id
         self.workspace_root = workspace_root
@@ -198,6 +199,23 @@ class ApiBackend:
             self.proactive = Proactive(self, llm=proactive_llm)
             register_goal_tools(self.registry, self.proactive)
             self.default_namespaces = set(self.default_namespaces) | {"goals"}
+
+        # Subagents (issue #13): spawn/status/send/close + parallel fan-out.
+        self.subagents = None
+        if enable_subagents:
+            from subagents import namespace as subagent_ns
+            from subagents.runner import SubagentRunner
+            from .parallel import register_parallel
+            backend = self
+
+            class _LiveDecider:  # children always use the backend's current decider
+                def decide(self, request):
+                    return backend.decider.decide(request)
+            self.subagents = SubagentRunner(gateway=self.gateway, registry=self.registry, policy=self.policy,
+                                            approvals=self.approvals, decider=_LiveDecider(),
+                                            workspace_root=self.workspace_root, max_depth=2)
+            subagent_ns.register(self.registry, self.subagents)
+            register_parallel(self.registry, self.subagents)
 
         # Monitors & alerts (issue #11): price / text / change watches.
         self.monitors = None
@@ -520,6 +538,21 @@ class ApiBackend:
     def _execute_run(self, run_id: str) -> None:
         with self._run_lock(run_id):
             run = self.runs.get(run_id)
+            if self.subagents is not None and run_id not in self.subagents._parents:
+                from subagents.runner import ParentRunInfo
+                deps = self._deps(run)
+                self.subagents.register_parent(ParentRunInfo(
+                    run_id=run_id, tenant_id=run.tenant_id,
+                    budgets={"model_calls": run.budgets.max_model_calls,
+                             "tool_calls": run.budgets.max_tool_calls,
+                             "wall_seconds": run.budgets.max_wall_seconds},
+                    used={"model_calls": run.model_calls_used, "tool_calls": run.tool_calls_used,
+                          "wall_seconds": 0.0},
+                    # empty = the parent may use any registered tool (namespaces load on
+                    # demand here); children are still limited to their ceiling, get no
+                    # external writes, and can't exceed depth or carved budgets
+                    loaded_namespaces=set(), event_log=self._logs[run_id],
+                    user_id=run.user_id, workspace_root=deps.workspace_root))
             advance_run(run, self._deps(run), self._logs[run_id])
             self._translate_new_events(run_id)
             self._save_run(run)
@@ -715,6 +748,12 @@ class ApiBackend:
             elif t == "task.input_required":
                 self._plans.setdefault(run_id, {"steps": []})["asked"] = True
                 self.eventbus.publish(run_id, "task.input_required", p)
+            elif t == "subagent.spawned":
+                self.eventbus.publish(run_id, "subagent", {"delegation_id": p.get("delegation_id"),
+                                                           "objective": p.get("objective", ""), "status": "running"})
+            elif t == "subagent.finished":
+                self.eventbus.publish(run_id, "subagent", {"delegation_id": p.get("delegation_id"),
+                                                           "status": p.get("status"), "summary": p.get("summary", "")})
             elif t == "run.paused":
                 self.eventbus.publish(run_id, "run.paused", {"run_id": run_id})
             elif t == "tool.result":

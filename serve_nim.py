@@ -123,6 +123,7 @@ backend = ApiBackend(
     enable_monitors=True, monitors_llm=_llm_json,         # price / text / change watches
     library_root=os.path.join(state_root, "users"),      # per-user documents & PDF forms
     enable_proactive=True, proactive_llm=_llm_json,      # goals, ideas (+ generator), feed
+    enable_subagents=True,                                # helper agents, incl. parallel fan-out
 )
 backend.proactive.start()
 backend.monitors.start()

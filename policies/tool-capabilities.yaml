@@ -118,6 +118,11 @@ tools:
     capabilities: [shell.exec.scoped]
     side_effect: local_write
     # Deterministic command guard runs before policy: destructive patterns are DENY (R5).
+  subagent.parallel:
+    risk: R2
+    capabilities: [subagent.spawn]
+    side_effect: local_write
+    # 2-3 children at once; same carve/intersection/depth rules as subagent.spawn.
   subagent.spawn:
     risk: R2
     capabilities: [subagent.spawn]

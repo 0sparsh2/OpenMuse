@@ -543,6 +543,7 @@
     const nodeCache = new WeakMap();
     function renderBlock(blk, m) {
       if (blk.type === "plan") return planCard(blk, m);
+      if (blk.type === "helpers") return helpersCard(blk, m);
       if (blk.type === "question") return questionCard(blk, m);
       if (blk.type === "browser" || blk.type === "approval") {
         const sig = blk.type === "browser"
@@ -588,6 +589,26 @@
         li.appendChild(el("span", { class: "mc-plan-ic", "aria-hidden": "true" }));
         li.appendChild(el("span", { text: s.title }));
         if (s.note) li.appendChild(el("em", { text: s.note }));
+        ol.appendChild(li);
+      });
+      card.appendChild(ol);
+      return el("div", { class: "mc-row bot" }, [card]);
+    }
+
+    function helpersCard(blk, m) {
+      const card = el("div", { class: "mc-plan mc-helpers" });
+      const done = blk.items.filter((x) => x.status !== "running").length;
+      const head = el("div", { class: "mc-plan-head" });
+      head.appendChild(el("strong", { text: "Helpers working in parallel" }));
+      head.appendChild(el("span", { text: done + "/" + blk.items.length }));
+      card.appendChild(head);
+      const ol = el("ol", {});
+      blk.items.forEach((x) => {
+        const st = x.status === "running" ? (m.running ? "active" : "pending") : x.status === "completed" ? "done" : "failed";
+        const li = el("li", { class: "st-" + st });
+        li.appendChild(el("span", { class: "mc-plan-ic", "aria-hidden": "true" }));
+        li.appendChild(el("span", { text: x.objective }));
+        if (x.summary) li.appendChild(el("em", { text: x.summary }));
         ol.appendChild(li);
       });
       card.appendChild(ol);
@@ -1034,7 +1055,7 @@
           break;
         case "tool.call": {
           const tool = d.tool || "";
-          if (tool === "tools.load_namespace" || tool.startsWith("task.")) break;  // shown as plan/question cards
+          if (tool === "tools.load_namespace" || tool.startsWith("task.") || tool === "subagent.parallel") break;  // shown as cards
           if (tool.startsWith("browser.")) {
             const sid = (d.args || {}).session_id || "";
             const blk = browserBlockFor(amsg, sid);
@@ -1103,6 +1124,16 @@
           const st = plan && plan.steps.find((s) => s.id === d.id);
           if (st) { st.status = d.status; st.note = d.note || ""; }
           if (st && d.status === "active") setStatus(st.title);
+          break;
+        }
+        case "subagent": {
+          let hb = amsg.blocks.find((b) => b.type === "helpers");
+          if (!hb) { hb = { type: "helpers", items: [] }; amsg.blocks.push(hb); }
+          let it = hb.items.find((x) => x.id === d.delegation_id);
+          if (!it) { it = { id: d.delegation_id, objective: d.objective || "Helper", status: "running", summary: "" }; hb.items.push(it); }
+          if (d.status && d.status !== "running") { it.status = d.status; it.summary = d.summary || ""; }
+          const busy = hb.items.filter((x) => x.status === "running").length;
+          setStatus(busy ? busy + " helper" + (busy > 1 ? "s" : "") + " working" : "Combining results");
           break;
         }
         case "task.input_required":

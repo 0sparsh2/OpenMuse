@@ -290,6 +290,8 @@ def advance_run(run: Run, deps: Deps, log: EventLog) -> Run:
                 approval_grant_id=grant.id if grant else "",
                 memory_root=deps.memory_root,
                 user_id=deps.user_id or run.user_id,
+                # tool timeouts are the tool's own, bounded by the run's remaining time
+                deadline_ms=max(30_000, int((run.budgets.max_wall_seconds - run.wall_elapsed_s) * 1000)),
             )
             if grant:
                 deps.approvals.consume(grant)

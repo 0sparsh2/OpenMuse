@@ -32,32 +32,34 @@ class EventLog:
         self.run_id = run_id
         self.events: list[Event] = []
         self.on_append = None  # optional live listener: fn(event)
+        self._append_lock = __import__("threading").Lock()  # parallel children share a parent log
         self._jsonl = None
         if jsonl_path:
             self._jsonl = open(jsonl_path, "a", encoding="utf-8")
 
     def append(self, type: str, payload: dict, *, actor: dict | None = None) -> Event:
-        seq = len(self.events)
-        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
-        event = Event(
-            event_id="evt_" + uuid.uuid4().hex[:12],
-            run_id=self.run_id,
-            sequence=seq,
-            type=type,
-            occurred_at=datetime.now(timezone.utc).isoformat(),
-            actor=actor or {"kind": "agent_worker", "id": "worker_phase1"},
-            payload=payload,
-            payload_sha256="sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
-        )
-        self.events.append(event)
-        if self._jsonl:
-            self._jsonl.write(json.dumps({
-                "event_id": event.event_id, "run_id": event.run_id,
-                "sequence": event.sequence, "type": event.type,
-                "occurred_at": event.occurred_at, "actor": event.actor,
-                "payload": payload, "payload_sha256": event.payload_sha256,
-            }, ensure_ascii=False) + "\n")
-            self._jsonl.flush()
+        with self._append_lock:
+            seq = len(self.events)
+            canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+            event = Event(
+                event_id="evt_" + uuid.uuid4().hex[:12],
+                run_id=self.run_id,
+                sequence=seq,
+                type=type,
+                occurred_at=datetime.now(timezone.utc).isoformat(),
+                actor=actor or {"kind": "agent_worker", "id": "worker_phase1"},
+                payload=payload,
+                payload_sha256="sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+            )
+            self.events.append(event)
+            if self._jsonl:
+                self._jsonl.write(json.dumps({
+                    "event_id": event.event_id, "run_id": event.run_id,
+                    "sequence": event.sequence, "type": event.type,
+                    "occurred_at": event.occurred_at, "actor": event.actor,
+                    "payload": payload, "payload_sha256": event.payload_sha256,
+                }, ensure_ascii=False) + "\n")
+                self._jsonl.flush()
         if self.on_append is not None:
             self.on_append(event)
         return event

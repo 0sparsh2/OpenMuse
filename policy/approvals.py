@@ -153,7 +153,9 @@ class AutonomousDecider(ApprovalDecider):
 
     AUTO_RISKS = {"R1", "R2"}
     HOLD_PREFIXES = ("shell.", "connector.", "production.", "scheduler.")
-    HOLD_TOOLS = {"memory.forget", "subagent.spawn", "subagent.send"}
+    # subagent.* runs without asking: children are capped to the parent's own
+    # tools, budgets and user, and never get external writes unless delegated.
+    HOLD_TOOLS = {"memory.forget"}
     SAFE_BROWSER_KINDS = {"navigate", "click", "type", "select", "scroll", "wait", "back"}
 
     def __init__(self, fallback: ApprovalDecider | None = None):

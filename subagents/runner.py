@@ -82,6 +82,10 @@ class ParentRunInfo:
     depth: int = 0
     loaded_namespaces: set[str] = field(default_factory=set)
     event_log: Optional[EventLog] = None
+    # multi-user deployments: children act for the parent's user, in the
+    # parent's workspace (per-user browser profile, files, memory scope)
+    user_id: str = ""
+    workspace_root: str = ""
 
 
 def _summarize_args(arguments: dict) -> dict:
@@ -338,12 +342,12 @@ class SubagentRunner(_SeamRunner):
                                    input_schema=self._registry.get(n).input_schema)
                         for n in tool_names]
 
-        mem_root = os.path.join(self._workspace_root, ".agent-memory",
-                                "children", rec.delegation_id)
+        workspace = parent.workspace_root or self._workspace_root
+        mem_root = os.path.join(workspace, ".agent-memory", "children", rec.delegation_id)
         ctx = ExecutionContext(
             run_id=rec.child_run_id, tenant_id=parent.tenant_id,
-            workspace_root=self._workspace_root, event_log=log,
-            memory_root=mem_root,
+            workspace_root=workspace, event_log=log,
+            memory_root=mem_root, user_id=parent.user_id,
         )
         started = time.time()
         rec.status = ChildStatus.RUNNING
@@ -555,6 +559,11 @@ class SubagentRunner(_SeamRunner):
         else:
             rec.status = ChildStatus.COMPLETED
         log.append("child.completed", {"status": rec.result.status})
+        parent = self._parents.get(rec.parent_run_id)
+        if parent is not None and parent.event_log is not None:
+            parent.event_log.append("subagent.finished", {
+                "delegation_id": rec.delegation_id, "status": rec.status,
+                "summary": (text or "").strip()[:300]})
 
     def _finish_incomplete(self, rec: DelegationRecord, reason: str) -> None:
         rec.result = ChildResult(
