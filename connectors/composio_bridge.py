@@ -226,6 +226,16 @@ class ComposioBridge:
             return {"successful": True, "data": data.get("data")}
         return execute
 
+    def execute_raw(self, user_id: str, slug: str, arguments: dict) -> dict:
+        """Run one Composio action for a user outside the agent loop (attachment
+        downloads, mail alerts). Same result shape as the bridged tools."""
+        toolkit = next(k for k, v in TOOLKITS.items() if slug.startswith(v["slug"] + "_"))
+        class _Ctx:  # the executor only needs the user id
+            pass
+        ctx = _Ctx()
+        ctx.user_id = user_id
+        return self._executor(toolkit, slug)(ctx, dict(arguments))
+
     # -- connections -------------------------------------------------------------------
     def connections(self, user_id: str, *, fresh: bool = False) -> dict[str, dict]:
         """{toolkit: {"id", "status"}} for ACTIVE connections (cached 30s)."""
@@ -283,6 +293,8 @@ class ComposioBridge:
 def _display_for(toolkit: str, slug: str):
     if slug in ("GMAIL_FETCH_EMAILS", "GMAIL_FETCH_MESSAGE_BY_THREAD_ID", "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID"):
         return _email_card
+    if slug == "GOOGLECALENDAR_FIND_FREE_SLOTS":
+        return _free_card
     if slug in ("GOOGLECALENDAR_EVENTS_LIST", "GOOGLECALENDAR_FIND_EVENT",
                 "GOOGLECALENDAR_CREATE_EVENT", "GOOGLECALENDAR_UPDATE_EVENT", "GOOGLECALENDAR_QUICK_ADD"):
         return _event_card
@@ -325,6 +337,46 @@ def _event_card(out: dict) -> dict | None:
         return {"type": "agenda", "title": f"{len(items)} events", "items": [one(e) for e in items[:6]],
                 "more": max(0, len(items) - 6)}
     return {"type": "event", **one(items[0]), "count": 1}
+
+
+def _free_card(out: dict, *, day_start: int = 8, day_end: int = 20, min_minutes: int = 30,
+               limit: int = 8) -> dict | None:
+    """Free time common to every queried calendar, split per day and clipped to
+    waking hours (in the times' own offset, i.e. the user's timezone)."""
+    from datetime import datetime, timedelta
+    data = (out or {}).get("data") or {}
+    cals = data.get("calendars") if isinstance(data, dict) else None
+    if not isinstance(cals, dict) or not cals:
+        return None
+
+    def parse(x):
+        try:
+            return datetime.fromisoformat(str(x).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    common = None
+    for cal in cals.values():
+        spans = [(parse(f.get("start")), parse(f.get("end"))) for f in (cal or {}).get("free") or []]
+        spans = [(a, b) for a, b in spans if a and b and b > a]
+        if common is None:
+            common = spans
+        else:  # intersect: a slot must be free for everyone
+            common = [(max(a, c), min(b, d)) for a, b in common for c, d in spans if max(a, c) < min(b, d)]
+    slots = []
+    for a, b in sorted(common or []):
+        day = a.replace(hour=0, minute=0, second=0, microsecond=0)
+        while day < b and len(slots) < limit:
+            lo, hi = max(a, day + timedelta(hours=day_start)), min(b, day + timedelta(hours=day_end))
+            if (hi - lo).total_seconds() >= min_minutes * 60:
+                fmt = lambda t: t.strftime("%-I:%M %p").replace(":00 ", " ")
+                slots.append({"label": f"{lo.strftime('%a %b %-d')} · {fmt(lo)}–{fmt(hi)}",
+                              "start": lo.isoformat(), "end": hi.isoformat()})
+            day += timedelta(days=1)
+    if not slots:
+        return {"type": "free_slots", "title": "No free time in that range", "slots": [],
+                "people": len(cals)}
+    return {"type": "free_slots", "title": "Free times" + (f" for all {len(cals)}" if len(cals) > 1 else ""),
+            "slots": slots, "people": len(cals)}
 
 
 def _pretty_when(iso: str) -> str:

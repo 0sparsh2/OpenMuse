@@ -733,6 +733,17 @@
         });
         if (d.more) ul.appendChild(el("li", { class: "mc-agenda-more", text: "+" + d.more + " more" }));
         card.appendChild(ul);
+      } else if (d.type === "free_slots") {
+        ic.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4M9 15l2 2 4-4"/></svg>';
+        meta.appendChild(el("div", { class: "mc-tool-t", text: d.title || "Free times" }));
+        meta.appendChild(el("div", { class: "mc-tool-s", text: d.slots && d.slots.length ? "Tap a time to plan something" : "Try a wider range" }));
+        const wrap = el("div", { class: "mc-slots" });
+        (d.slots || []).forEach((sl) => {
+          const b = el("button", { type: "button", class: "mc-slot", text: sl.label });
+          b.addEventListener("click", () => { if (state.prefillChat) state.prefillChat("Book " + sl.label + " for "); });
+          wrap.appendChild(b);
+        });
+        card.appendChild(wrap);
       } else if (d.type === "goal") {
         ic.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/></svg>';
         meta.appendChild(el("div", { class: "mc-tool-t", text: d.title || "Goal" }));
@@ -2887,6 +2898,18 @@
             catch (e) { toast("Couldn't disconnect: " + e.message); d.disabled = false; }
           });
           act.appendChild(d);
+          if (a.toolkit === "gmail") {   // opt-in new-mail alerts (issue #8)
+            const lab = el("label", { class: "app-alerts" });
+            const cb = el("input", { type: "checkbox", "aria-label": "Tell me about new email" });
+            lab.appendChild(cb); lab.appendChild(document.createTextNode(" Tell me about new email"));
+            API.req("GET", "/v1/apps/gmail/alerts").then((r) => { cb.checked = !!r.enabled; }).catch(() => { lab.hidden = true; });
+            cb.addEventListener("change", async () => {
+              try { await API.req("PUT", "/v1/apps/gmail/alerts", { body: { enabled: cb.checked } });
+                    toast(cb.checked ? "You'll get a notification when new email arrives." : "New-email alerts off."); }
+              catch (e) { cb.checked = !cb.checked; toast("Couldn't change that: " + e.message); }
+            });
+            card.appendChild(lab);
+          }
         } else {
           const c = el("button", { type: "button", class: "btn small", text: "Connect" });
           c.addEventListener("click", async () => {

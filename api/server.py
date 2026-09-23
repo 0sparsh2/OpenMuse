@@ -98,6 +98,8 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         ("DELETE", r"^/v1/logins/(?P<lid>lg_[a-f0-9]+)$", "logins_delete", "sessions:write", False),
         ("GET", r"^/v1/push/config$", "push_config", "sessions:read", False),
         ("GET", r"^/v1/voice/config$", "voice_config", "sessions:read", False),
+        ("GET", r"^/v1/apps/gmail/alerts$", "mail_alerts_get", "sessions:read", False),
+        ("PUT", r"^/v1/apps/gmail/alerts$", "mail_alerts_put", "sessions:write", False),
         ("POST", r"^/v1/voice/transcribe$", "voice_transcribe", "sessions:write", False),
         ("POST", r"^/v1/voice/speak$", "voice_speak", "sessions:write", False),
         ("POST", r"^/v1/push/subscribe$", "push_subscribe", "sessions:write", False),
@@ -628,6 +630,24 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         finally:
             self.backend._note_listeners.remove(listener)
         return None
+
+    # -- new-mail alerts (issue #8) -----------------------------------------------------
+    def _mailwatch(self):
+        if self.backend.mailwatch is None:
+            raise _NotFound("gmail alerts")
+        return self.backend.mailwatch
+
+    def h_mail_alerts_get(self, params):
+        return 200, self._mailwatch().settings(self._uid()), None
+
+    def h_mail_alerts_put(self, params):
+        b = self._parse_json()
+        mw = self._mailwatch()
+        out = mw.set_enabled(self._uid(), bool(b.get("enabled")))
+        if b.get("enabled"):
+            import threading
+            threading.Thread(target=lambda uid=self._uid(): mw.check(uid), daemon=True).start()  # seed now
+        return 200, out, None
 
     # -- voice (issue #19) ------------------------------------------------------------
     def h_voice_config(self, params):

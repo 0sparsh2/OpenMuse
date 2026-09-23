@@ -235,6 +235,13 @@ class ApiBackend:
             browser_operator.credential_resolver = self.logins.resolve
             browser_operator.credential_describer = self.logins.info
             self._register_logins_tool()
+        # Gmail extras (issue #8): attachments -> Library, opt-in new-mail alerts
+        self.mailwatch = None
+        if self.apps is not None and hasattr(self.apps, "execute_raw"):
+            from api.mail import MailWatch, register_attachment_tool
+            if self.library is not None:
+                register_attachment_tool(self)
+            self.mailwatch = MailWatch(self)
         if browser_operator is not None and hasattr(browser_operator, "download_sink") and self.library is not None:
             browser_operator.download_sink = (
                 lambda uid, name, data: self.library.add(uid or "user_api", name, data,

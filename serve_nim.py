@@ -150,6 +150,8 @@ backend = ApiBackend(
 backend.proactive.start()
 backend.monitors.start()
 backend.schedules.start()
+if backend.mailwatch is not None:
+    backend.mailwatch.start()  # opt-in new-mail alerts (per user, in Apps)
 # Autonomy (on by default; OPENMUSE_AUTONOMY=off restores ask-for-everything):
 # reversible local steps such as browsing run on their own, while commits,
 # credentials, shell, external writes and R3+ still wait for approval.

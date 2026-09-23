@@ -651,3 +651,11 @@ body { background: linear-gradient(135deg, #fbf7ef 0%, #f3f1fb 45%, #e3f0fc 100%
 @keyframes vm-spin { to { transform: rotate(360deg); } }
 @keyframes vm-breathe { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.08); opacity: .6; } }
 @media (prefers-reduced-motion: reduce) { .vm-ring, .vm-core { animation: none !important; transition: none !important; } }
+
+/* free-time card (issue #9) */
+.mc-slots { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.mc-slot { border: 1px solid rgba(127,127,127,.25); background: var(--mc-pill); color: inherit; border-radius: 999px;
+  padding: 8px 12px; min-height: 40px; font: 13.5px var(--om-font); cursor: pointer; }
+.mc-slot:hover, .mc-slot:focus-visible { border-color: var(--mc-accent); color: var(--mc-accent); }
+.app-alerts { display: flex; align-items: center; gap: 8px; font-size: 13.5px; margin-top: 10px; min-height: 32px; }
+.app-alerts input { width: 18px; height: 18px; margin: 0; }

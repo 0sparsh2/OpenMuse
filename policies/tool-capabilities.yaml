@@ -315,6 +315,10 @@ tools:
     risk: R2
     capabilities: [connector.gmail]
     side_effect: external_write
+  gmail.save_attachment:
+    risk: R2
+    capabilities: [artifacts.write]
+    side_effect: local_write
   gmail.send_email:
     risk: R3
     capabilities: [connector.gmail]
