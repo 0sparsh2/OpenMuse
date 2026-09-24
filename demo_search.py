@@ -336,7 +336,23 @@ def main() -> int:
         page.click(".mc-search > summary")
         qs = page.eval_on_selector_all(".mc-query", "els => els.map((e) => e.textContent)")
         check("the actual queries are visible", qs == ["mercury bank fees", "mercury pricing plans"], str(qs))
-        page.click(".mc-sources-btn")
+        row = page.eval_on_selector_all(".mc-srcrow .mc-srcchip:not(.mc-srcchip-all)", "els => els.map((e) => [e.textContent, e.href])")
+        check("the websites an answer used are listed under it", row and row[0][0].endswith("mercury.com")
+              and row[0][1].startswith("https://mercury.com/pricing"), str(row))
+        chats = json.loads(urllib.request.urlopen(urllib.request.Request(api + "/v1/chats", headers={"Authorization": "Bearer " + token})).read())["chats"]
+        turns = json.loads(urllib.request.urlopen(urllib.request.Request(api + f"/v1/chats/{chats[0]['chat_id']}/messages",
+                                                                    headers={"Authorization": "Bearer " + token})).read())["turns"]
+        srcs = turns[-1].get("sources") or []
+        check("sources are saved with the answer (chat history API)", srcs and any(x["cited"] and x["site"] == "mercury.com" for x in srcs)
+              and any(not x["cited"] for x in srcs), str(srcs)[:300])
+        page.evaluate("() => { for (const k of Object.keys(localStorage)) if (k !== 'om.token') localStorage.removeItem(k); }")
+        page.reload()
+        page.wait_for_selector(".mc-srcrow", timeout=15000)
+        bubble = page.inner_text(".mc-bubble.bot")
+        check("reopening the chat later still shows the websites (and no bare [n])",
+              page.eval_on_selector_all("a.cite", "els => els.length") == 2 and "[1" not in bubble
+              and "mercury.com" in page.inner_text(".mc-srcrow"), bubble[:200])
+        page.click(".mc-srcchip-all")
         page.wait_for_selector(".src-sheet")
         groups = page.eval_on_selector_all(".src-sheet-g", "els => els.map((e) => e.textContent)")
         check("the Sources sheet separates cited from also-read", groups == ["Cited", "Also read"], str(groups))

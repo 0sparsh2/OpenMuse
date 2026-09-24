@@ -975,7 +975,8 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
                   "user_text": self.backend._run_text.get(r.run_id, ""),
                   "final_text": r.final_text or "",
                   "failure_message": r.failure_message or "",
-                  "browser_session": browser_by_run.get(r.run_id)} for r in runs]
+                  "browser_session": browser_by_run.get(r.run_id),
+                  "sources": self.backend.run_sources(r.run_id)} for r in runs]
         return 200, {"chat_id": rec.chat_id, "title": rec.title, "turns": turns}, None
 
     # -- accounts ----------------------------------------------------------------

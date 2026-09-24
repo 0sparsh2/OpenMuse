@@ -197,6 +197,7 @@
   }
   function webSources(m) {
     const map = new Map();
+    (m.sources || []).forEach((src) => map.set(Number(src.n), src));   // saved with the answer (survives reloads)
     (m.blocks || []).forEach((b) => {
       if (b.display && b.display.type === "web_sources") (b.display.sources || []).forEach((src) => map.set(Number(src.n), src));
       if (b.display && b.display.source && b.display.source.n) map.set(Number(b.display.source.n), b.display.source);
@@ -224,6 +225,28 @@
         String(first.site).replace(/&/g, "&amp;").replace(/</g, "&lt;") + (ns.length > 1 ? " +" + (ns.length - 1) : "") + "</a>";
     });
   }
+  // Under a searched answer: the websites it used, cited ones first, always visible
+  function sourcesRow(text, srcs) {
+    const cited = citedNumbers(text);
+    const all = [...srcs.values()].sort((a, b) => a.n - b.n);
+    const used = all.filter((s) => cited.has(Number(s.n)));
+    const shown = (used.length ? used : all).slice(0, 6);
+    const row = el("div", { class: "mc-srcrow", role: "group", "aria-label": "Sources" });
+    row.appendChild(el("span", { class: "mc-srcrow-l", text: used.length ? "Sources" : "Read" }));
+    shown.forEach((src) => {
+      const a = el("a", { class: "mc-srcchip", href: src.url, target: "_blank", rel: "noopener noreferrer", title: src.title || src.site });
+      a.appendChild(el("span", { class: "mc-srcchip-n", text: String(src.n) }));
+      a.appendChild(favicon(src.site));
+      a.appendChild(el("span", { text: src.site }));
+      row.appendChild(a);
+    });
+    const more = all.length - shown.length;
+    const btn = el("button", { type: "button", class: "mc-srcchip mc-srcchip-all", text: more > 0 ? "All " + all.length + " sources" : "Details" });
+    btn.addEventListener("click", () => sourcesSheet(text, srcs));
+    row.appendChild(btn);
+    return row;
+  }
+
   function sourceRow(src) {
     const li = el("li", {});
     const a = el("a", { href: src.url, target: "_blank", rel: "noopener noreferrer" });
@@ -469,7 +492,7 @@
         res.turns.forEach((t) => {
           chat.messages.push({ role: "user", text: t.user_text, ts: t.created_at * 1000 });
           const blocks = t.browser_session ? [{ type: "browser", sessionId: t.browser_session, status: "Session ended", state: "closed" }] : [];
-          chat.messages.push({ role: "assistant", text: t.final_text, blocks, ts: t.created_at * 1000,
+          chat.messages.push({ role: "assistant", text: t.final_text, blocks, sources: t.sources || [], ts: t.created_at * 1000,
                                error: t.state === "FAILED" ? (t.failure_message || "This task failed.") : "" });
         });
         renderThread(); saveChats();
@@ -580,16 +603,10 @@
         if (m.text) {
           const bub = el("div", { class: "mc-bubble bot" });
           const srcs = webSources(m);
-          bub.innerHTML = srcs.size ? renderCited(m.text, srcs) : renderRich(m.text);
+          // no known sources: never show bare [2, 3] markers
+          bub.innerHTML = srcs.size ? renderCited(m.text, srcs) : renderRich(String(m.text).replace(CITE_RE, "").replace(/\s+([.,;:!?])/g, "$1"));
           thread.appendChild(el("div", { class: "mc-row bot" }, [bub]));
-          if (srcs.size && !m.running) {
-            const btn = el("button", { type: "button", class: "mc-sources-btn" });
-            btn.appendChild(el("span", { class: "mc-favs", "aria-hidden": "true" }));
-            [...srcs.values()].slice(0, 3).forEach((src) => btn.firstChild.appendChild(favicon(src.site)));
-            btn.appendChild(el("span", { text: "Sources" }));
-            btn.addEventListener("click", () => sourcesSheet(m.text, srcs));
-            thread.appendChild(el("div", { class: "mc-row bot" }, [btn]));
-          }
+          if (srcs.size && !m.running) thread.appendChild(el("div", { class: "mc-row bot" }, [sourcesRow(m.text, srcs)]));
         }
         if (m.error) {
           const bub = el("div", { class: "mc-bubble bot err", text: m.error });
@@ -1304,6 +1321,7 @@
           break;
         case "run.completed":
           if (d.final_text) amsg.text = d.final_text;
+          if (d.sources) amsg.sources = d.sources;
           break;
         case "run.failed":
           amsg.error = "Something went wrong: " + (d.message || d.code || "run failed");

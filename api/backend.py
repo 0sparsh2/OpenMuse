@@ -228,6 +228,7 @@ class ApiBackend:
         # in parallel with context building (rules, then Jev when rules can't tell)
         self._search_hints: dict[str, tuple] = {}
         self.citation_stats: dict[str, dict] = {}
+        self._sources_mem: dict[str, list] = {}
         self._hint_pool = None
         self.context_builder.runtime_notes_provider = self._runtime_notes
         from tools.namespaces import web_tools
@@ -539,6 +540,37 @@ class ApiBackend:
             return
         self.citation_stats[run.run_id] = stats  # {"checked": n, "removed": m}
         run.final_text = fixed
+        self._record_sources(run, svc)
+
+    def _record_sources(self, run, svc) -> None:
+        """Keep the websites behind an answer with the answer (DB-backed), so a chat
+        reopened later still shows its sources — cited ones flagged, in order."""
+        from urllib.parse import urlparse
+        from search.service import WebSearch
+        cited = {int(n) for m in WebSearch.CITE.finditer(run.final_text or "")
+                 for n in re.findall(r"\d{1,3}", m.group(0))}
+        out = []
+        for s in svc.sources(run.run_id):
+            host = (urlparse(s["url"]).hostname or "").lower()
+            out.append({"n": s["n"], "title": (s.get("title") or host)[:160], "url": s["url"],
+                        "site": host[4:] if host.startswith("www.") else host, "date": s.get("date", ""),
+                        "cited": s["n"] in cited})
+        self._sources_mem[run.run_id] = out
+        if self.db is not None:
+            try:
+                self.db.kv_put("run_sources", run.run_id, {"run_id": run.run_id, "sources": out}, user_id=run.user_id)
+            except Exception:
+                pass
+
+    def run_sources(self, run_id: str) -> list[dict]:
+        if run_id in self._sources_mem:
+            return self._sources_mem[run_id]
+        if self.db is not None:
+            rec = self.db.kv_get("run_sources", run_id)
+            if rec:
+                self._sources_mem[run_id] = rec.get("sources") or []
+                return self._sources_mem[run_id]
+        return []
 
     def _run_lock(self, run_id: str) -> threading.Lock:
         return self._run_locks.setdefault(run_id, threading.Lock())
@@ -955,6 +987,7 @@ class ApiBackend:
                     "run_id": run_id,
                     "message_id": "msg_assistant_" + run_id.split("_", 1)[1],
                     "final_chars": p.get("final_chars", 0),
+                    **({"sources": self.run_sources(run_id)} if self.run_sources(run_id) else {}),
                 })
             elif t == "run.failed":
                 self.eventbus.publish(run_id, M.SSE_RUN_FAILED, {

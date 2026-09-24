@@ -11,8 +11,11 @@ Jev (TypeSafe AI), when configured, makes the fast in-between decisions.
   Expanding it shows the exact queries and the numbered sources.
 - **Citation chips** in the answer (e.g. `mercury.com +1`). Each links to the
   page it cites.
-- A **Sources** button under the answer opens a panel split into **Cited** and
-  **Also read**.
+- A **Sources** row under every searched answer lists the websites it cites,
+  numbered to match the chips. "All N sources" opens a panel split into
+  **Cited** and **Also read**. Sources are saved with the answer (SQLite), so a
+  chat reopened later still shows them; the chat history API returns them as
+  `turns[].sources`.
 - **Weather** answers show a forecast card. The forecast (Open-Meteo) is cited like
   any other source.
 - **Research** requests ("research…", "compare the best…", "write a report") run a
@@ -169,7 +172,7 @@ The interface is `search/engines.py::SearchProvider.search(query, recency_days, 
 | Search service alone (live DuckDuckGo, Jev, NIM embeddings) | 3–6s per search |
 | Whole answers with the live model | Pricing question ~20s (3 queries); latest F1 result ~28s (3 searches after Jev flagged thin results); research comparison ~106s with 8 verified citations |
 | Jev on the local test pages (`demo_cu_jev.py`) | Correct on cookie banner, sign-in wall, results page, "task done", a payment "Continue" the keyword check missed, and a disguised human check |
-| Tests | `demo_search.py` 57/57, `demo_cu_jev.py` 16/16 |
+| Tests | `demo_search.py` 60/60, `demo_cu_jev.py` 16/16 |
 
 Most of the time in a searched answer goes to the main model's reasoning between
 steps, not to the search itself.
