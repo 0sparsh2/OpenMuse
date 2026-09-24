@@ -41,7 +41,10 @@ approvals, notifications and per-user settings, so nothing is lost on restart.
    `system`, `files`, `task`, `web` and `memory`, plus connected apps, load by
    default; others load on demand (`tools.load_namespace`).
 3. **Call the model** (`gateway/`). The request goes through the
-   OpenAI-compatible provider, with retries and a fallback model. Every turn
+   OpenAI-compatible provider. `gateway/resilience.py` handles retries with
+   backoff, a fallback model, and one retry with thinking off when the model
+   comes back empty (it can spend its whole budget thinking on a long tool
+   result). Errors that NIM reports inside a 200 stream are retried too. Every turn
    streams its words as they're written: `gateway/streaming.py` groups tokens
    into short chunks and sends them as `assistant.partial` events, which aren't
    stored individually. A retry after a dropped connection sends a reset, and a

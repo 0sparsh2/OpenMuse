@@ -38,30 +38,10 @@ fallback = OpenAICompatProvider(
 )
 
 
-def _complete_with_fallback(request, primary=None):
-    from gateway.protocol import ProviderError
-    last = None
-    for prov, attempts in ((primary or provider, 4), (fallback, 3)):
-        for attempt in range(attempts):
-            try:
-                resp = prov.complete(request)
-                if prov is fallback:
-                    print(f"answered by fallback model {prov.model}", flush=True)
-                return resp
-            except ProviderError as exc:
-                last = exc
-                if not exc.retryable:
-                    break  # auth/invalid request: the same model won't do better
-                wait = min(2 ** attempt, 8)
-                print(f"{prov.model}: {exc.code}; retrying in {wait}s", flush=True)
-                time.sleep(wait)
-    raise last
-
-
 def _respond(request, history):
-    # spoken turns: thinking off for a fast first sentence (voice mode, #19)
-    voice = request.metadata is not None and getattr(request.metadata, "mode", "") == "voice"
-    resp = _complete_with_fallback(request, primary=voice_provider if voice else None)
+    # retries, fallback model, voice on the no-thinking model, and one no-thinking retry
+    # when the model comes back empty — see gateway/resilience.py
+    resp = resilient.respond(request, history)
     if os.environ.get("OPENMUSE_DEBUG"):
         for tc in resp.tool_calls:
             print("TOOL_CALL", tc.name, json.dumps(tc.arguments)[:400], flush=True)
@@ -86,6 +66,11 @@ voice_provider = OpenAICompatProvider(
 )
 
 
+from gateway.resilience import Resilient
+
+resilient = Resilient(provider, fallback=fallback, no_think=voice_provider, log=lambda m: print(m, flush=True))
+
+
 def _llm_json(system: str, user: str) -> str:
     """Background memory jobs (extract / consolidate / compact): one plain
     completion, no tools, deterministic-ish, through the same retry/fallback."""
@@ -95,7 +80,7 @@ def _llm_json(system: str, user: str) -> str:
         messages=[ChatMessage(role="system", blocks=[Block(kind="text", text=system)]),
                   ChatMessage(role="user", blocks=[Block(kind="text", text=user)])],
         tools=[], max_output_tokens=4000, temperature=0.0, metadata=None)
-    return _complete_with_fallback(req, primary=memory_provider).text
+    return resilient.complete(req, primary=memory_provider).text
 
 
 data_root = os.environ.get("OPENMUSE_DATA", os.path.join(ROOT, ".data", "api"))

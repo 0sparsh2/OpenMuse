@@ -24,6 +24,7 @@ from api import ApiBackend                                   # noqa: E402
 from api.server import serve                                 # noqa: E402
 from client.serve_ui import serve_ui                         # noqa: E402
 from gateway.protocol import ProviderError                   # noqa: E402
+from gateway.resilience import Resilient                     # noqa: E402
 from gateway.providers.openai_compat import OpenAICompatProvider  # noqa: E402
 from policy import AutonomousDecider                         # noqa: E402
 
@@ -31,7 +32,7 @@ RESULTS: list[tuple[str, bool]] = []
 ANSWER = ("India's squad for the West Indies ODIs is led by Shubman Gill, with KL Rahul as vice-captain. "
           "Rohit Sharma and Virat Kohli return, and Auqib Nabi and Naman Dhir get their first call-ups. "
           "The three-match series starts on 27 September.")
-STATE = {"drop_next": False, "calls": 0}
+STATE = {"drop_next": False, "error_next": False, "empty_next": False, "calls": 0, "no_think_calls": 0}
 
 
 def check(name, ok, detail=""):
@@ -60,6 +61,20 @@ class FakeNim(http.server.BaseHTTPRequestHandler):
 
         def chunk(delta, finish=None):
             send({"choices": [{"index": 0, "delta": delta, "finish_reason": finish}]})
+        no_think = (body.get("chat_template_kwargs") or {}).get("enable_thinking") is False
+        STATE["no_think_calls"] += no_think
+        if STATE["error_next"]:          # NIM reports a failure inside a 200 stream
+            STATE["error_next"] = False
+            send({"error": {"message": "Internal server error", "code": 500}})
+            send("[DONE]")
+            self.wfile.write(b"0\r\n\r\n")
+            return
+        if STATE["empty_next"] and not no_think:   # all thinking, no answer
+            chunk({"role": "assistant", "reasoning_content": "Let me think about the squad in detail… " * 20})
+            chunk({}, "length")
+            send("[DONE]")
+            self.wfile.write(b"0\r\n\r\n")
+            return
         if wants_tool:   # a tool call arrives in pieces, as real streams do
             chunk({"role": "assistant", "content": "Let me check the clock. "})
             chunk({"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "system__clock", "arguments": ""}}]})
@@ -86,16 +101,13 @@ class FakeNim(http.server.BaseHTTPRequestHandler):
 def main() -> int:
     nim = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeNim)
     threading.Thread(target=nim.serve_forever, daemon=True).start()
-    prov = OpenAICompatProvider(api_key="test", base_url=f"http://127.0.0.1:{nim.server_address[1]}/v1", model="fake")
-
-    def respond(request, history):   # same retry shape as serve_nim.py
-        for attempt in range(3):
-            try:
-                return prov.complete(request)
-            except ProviderError as exc:
-                if not exc.retryable:
-                    raise
-        raise RuntimeError("gave up")
+    base = f"http://127.0.0.1:{nim.server_address[1]}/v1"
+    prov = OpenAICompatProvider(api_key="test", base_url=base, model="fake")
+    no_think = OpenAICompatProvider(api_key="test", base_url=base, model="fake",
+                                    extra_body={"chat_template_kwargs": {"enable_thinking": False}})
+    logs = []
+    resilient = Resilient(prov, no_think=no_think, sleep=lambda s: None, log=logs.append)   # what serve_nim.py uses
+    respond = resilient.respond
 
     tmp = tempfile.mkdtemp(prefix="om-stream-")
     backend = ApiBackend(workspace_root=os.path.join(tmp, "ws"), respond=respond, db_path=os.path.join(tmp, "db.sqlite"),
@@ -147,7 +159,21 @@ def main() -> int:
     check("a dropped stream is retried and the half-written text is reset", run.state == "COMPLETED"
           and len(resets) >= 2 and after_last_reset == ANSWER, f"{len(resets)} resets")
 
-    # -- 4. real Chromium: the bubble grows before the answer is finished --------------------------
+    # -- 4. NIM failures that used to end the turn with "Model returned no text" ------------------
+    STATE["error_next"] = True
+    run, _ = ask("who is in the squad? (error inside the stream)")
+    final = "".join(e.data.get("text", "") for e in backend.eventbus.read_since(run.run_id, -1) if e.type == "assistant.delta")
+    check("an error reported inside a 200 stream is retried, not turned into an empty answer",
+          run.state == "COMPLETED" and final == ANSWER, f"{run.state} {run.failure_code}")
+    STATE["empty_next"], before = True, STATE["no_think_calls"]
+    run, _ = ask("who is in the squad? (all thinking, no answer)")
+    STATE["empty_next"] = False
+    final = "".join(e.data.get("text", "") for e in backend.eventbus.read_since(run.run_id, -1) if e.type == "assistant.delta")
+    check("a reply that's all thinking and no answer is asked again with thinking off",
+          run.state == "COMPLETED" and final == ANSWER and STATE["no_think_calls"] > before
+          and any("thinking off" in l for l in logs), f"{run.state} {run.failure_code} {logs[-2:]}")
+
+    # -- 5. real Chromium: the bubble grows before the answer is finished --------------------------
     api_srv = serve(backend)
     api = f"http://127.0.0.1:{api_srv.server_address[1]}"
     req = urllib.request.Request(api + "/v1/auth/signup", method="POST", headers={"Content-Type": "application/json"},

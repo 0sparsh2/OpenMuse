@@ -221,6 +221,8 @@ class OpenAICompatProvider(Provider):
             data = self._read_stream(resp, sink, request.metadata.step if request.metadata else 0)
         else:
             data = resp.json()
+        if isinstance(data, dict) and data.get("error") and not data.get("choices"):
+            raise ProviderError(TRANSIENT, f"provider error: {str(data['error'])[:300]}", retryable=True)
         try:
             choice = data["choices"][0]["message"]
         except (KeyError, IndexError) as exc:
@@ -272,6 +274,11 @@ class OpenAICompatProvider(Provider):
                     obj = json.loads(chunk)
                 except json.JSONDecodeError:
                     continue
+                if obj.get("error"):
+                    # hosted NIM can report a failure inside a 200 stream: retry it, don't return nothing
+                    err = obj["error"] if isinstance(obj["error"], dict) else {"message": str(obj["error"])}
+                    raise ProviderError(TRANSIENT, f"provider error in stream: {str(err.get('message', err))[:300]}",
+                                        retryable=True)
                 usage = obj.get("usage") or usage
                 for ch in obj.get("choices") or []:
                     d = ch.get("delta") or {}
