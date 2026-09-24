@@ -56,7 +56,9 @@ approvals, notifications and per-user settings, so nothing is lost on restart.
 5. **Approvals.** ASK parks the run (`WAITING_FOR_APPROVAL`) and sends an
    approval card over SSE. The grant is bound to the exact argument hash and is
    single-use. With autonomy on, `AutonomousDecider` approves reversible local
-   R1/R2 steps.
+   R1/R2 steps. When you deny, the model is told so in a trusted runtime notice,
+   and if it proposes the identical action again in the same run, it is refused
+   straight away (`USER_DECLINED`) rather than asking you again.
 6. **Execute** (`tools/executor.py`). Tools run with a deadline. Their output is
    schema-checked, capped, scanned for secrets, and handed back to the model as
    **untrusted data**.

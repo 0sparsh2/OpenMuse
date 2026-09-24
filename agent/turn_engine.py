@@ -21,7 +21,7 @@ from gateway.protocol import Block, ChatMessage, ProviderError
 from gateway.router import Router
 from observability.events import EventLog
 from policy.approvals import ApprovalDecider, ApprovalService, PendingApproval
-from policy.engine import ASK, DENY, PolicyEngine, PolicyInput
+from policy.engine import ASK, DENY, PolicyDecision, PolicyEngine, PolicyInput
 from tools.executor import (
     ExecutionContext,
     execute_batch,
@@ -200,6 +200,12 @@ def advance_run(run: Run, deps: Deps, log: EventLog) -> Run:
                 argument_summary=_summarize_args(p.arguments),
                 has_valid_approval=grant is not None,
             ))
+            if decision.decision == ASK and deps.approvals.was_denied(
+                    run_id=run.run_id, tool_name=p.tool_name, argument_hash=p.argument_hash):
+                # asking again for something the user just declined would loop forever
+                decision = PolicyDecision(DENY, "USER_DECLINED",
+                                          "The user already declined this exact action in this task. Don't "
+                                          "propose it again — tell them it wasn't done and offer another way.")
             evaluations.append((p, decision, grant))
 
         log.append("policy.decisions", {

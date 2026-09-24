@@ -117,7 +117,7 @@ def register(registry: ToolRegistry) -> None:
             "&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,precipitation"
             "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max"
             "&temperature_unit=%s&wind_speed_unit=%s"
-            % (p["latitude"], p["longitude"], int(args.get("days", 4)),
+            % (p["latitude"], p["longitude"], max(5, int(args.get("days", 5))),   # always a few days: one call is enough
                "fahrenheit" if args.get("units") == "imperial" else "celsius",
                "mph" if args.get("units") == "imperial" else "kmh"), timeout=8)
         if st != 200:
@@ -150,7 +150,8 @@ def register(registry: ToolRegistry) -> None:
 
     registry.register(ToolDefinition(
         name="web.weather", version="1.0.0",
-        description="Current weather and a short forecast for a place (city name). Use this instead of web.search for weather.",
+        description=("Current weather and a 5+ day forecast for a place (city name) in one call — today, tomorrow and "
+                     "the weekend are all included, so call it once. Use this instead of web.search for weather."),
         input_schema={"type": "object", "properties": {
             "location": {"type": "string", "maxLength": 120},
             "days": {"type": "integer", "minimum": 1, "maximum": 7},

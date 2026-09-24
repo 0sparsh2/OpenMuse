@@ -1,7 +1,31 @@
-# OpenMuse
+<div align="center">
 
-An open-source personal agent in the style of Meta's Muse. It chats, searches
-the web with citations, uses a real browser you can watch and take over,
+<img src="client/web/img/openmuse-character.png" width="120" alt="OpenMuse mascot, a felt mushroom">
+
+<h1>OpenMuse</h1>
+
+<p><b>An open-source personal agent that searches, browses, remembers you, and asks before it acts.</b></p>
+
+<p>Runs on NVIDIA NIM. It also does voice, works as a phone app, and connects to Gmail and Calendar.</p>
+
+<p>
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#demo">Demo</a> ·
+  <a href="#what-it-can-do">Features</a> ·
+  <a href="docs/ARCHITECTURE.md">Architecture</a> ·
+  <a href="#documentation">Docs</a>
+</p>
+
+<a href="https://github.com/0sparsh2/OpenMuse/actions/workflows/tests.yml"><img src="https://github.com/0sparsh2/OpenMuse/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
+
+</div>
+
+<br>
+
+<a href="docs/video/openmuse-demo.mp4"><img src="docs/slides/00-hero.png" alt="OpenMuse: Ask it. Watch it get done."></a>
+
+OpenMuse is an open-source personal agent in the style of Meta's Muse. It chats,
+searches the web with citations, uses a real browser you can watch and take over,
 remembers you, reads your email and calendar, and does tasks on a schedule.
 It runs locally on **NVIDIA NIM** models. Anything that spends money, sends
 something, signs in, or can't be undone waits for your approval.
@@ -10,9 +34,23 @@ something, signs in, or can't be undone waits for your approval.
   The UI is a static single-page app with no build step.
 - **Models:** NVIDIA NIM through an OpenAI-compatible API. The default is Nemotron.
   NIM also provides embeddings (memory, search ranking) and Riva speech (voice).
-- **Status:** 24 test suites; every check passes except the live voice-latency
-  one, which varies with NVIDIA's hosted speech service. The roadmap is tracked
-  in [issue #21](https://github.com/0sparsh2/OpenMuse/issues/21).
+- **Status:** 24 test suites, run on every push by GitHub Actions. The roadmap is
+  tracked in [issue #21](https://github.com/0sparsh2/OpenMuse/issues/21).
+
+## Demo
+
+<a href="docs/video/openmuse-demo.mp4"><img src="docs/video/openmuse-demo.gif" alt="25-second OpenMuse demo: web search with sources, live browser, approvals, memory, voice and mobile"></a>
+
+**[Watch the full demo with sound (25 s, MP4)](docs/video/openmuse-demo.mp4)**
+
+Every screen in the demo is a real screenshot of OpenMuse running on NVIDIA NIM,
+taken with a fictional demo account. The screenshots come from
+[`docs/tools/capture_screenshots.py`](docs/tools/capture_screenshots.py), the slides from
+[`docs/tools/build_slides.py`](docs/tools/build_slides.py), and the video was made with
+[brag](https://github.com/latent-spaces/brag) and [Hyperframes](https://hyperframes.heygen.com).
+Music: "Happy Beats & Business Moves Vol. 12" by Sascha Ende
+([ende.app](https://ende.app/en/song/12881-happy-beats-business-moves-vol-12)), CC BY 4.0.
+Sound effects: Kenney (CC0).
 
 ## What it can do
 
@@ -29,6 +67,27 @@ something, signs in, or can't be undone waits for your approval.
 | **Voice** | Hands-free voice mode: Riva ASR/TTS on NIM, streamed answers spoken sentence by sentence, and barge-in (talk over it to interrupt). |
 | **Mobile** | Installable PWA: works offline, web push (including approvals on a locked phone), and a share target (share a link or file into OpenMuse). |
 | **Accounts** | Sign up / sign in. Memory, chats, logins, apps and files are isolated per user. |
+
+## A closer look
+
+<table>
+<tr>
+<td width="50%"><img src="docs/slides/01-web-search.png" alt="Web search with clickable sources"><br><b>Web search.</b> It reads the pages, not just the snippets, and every fact links back to its source.</td>
+<td width="50%"><img src="docs/slides/02-computer-use.png" alt="Live browser"><br><b>Computer use.</b> Watch a real browser work live, and take control at any point.</td>
+</tr>
+<tr>
+<td><img src="docs/slides/03-approval.png" alt="Approval card"><br><b>Approvals.</b> Sending, buying, signing in and shell commands wait for your OK.</td>
+<td><img src="docs/slides/04-streaming.png" alt="Streaming answer"><br><b>Streaming.</b> Answers appear as they're written.</td>
+</tr>
+<tr>
+<td><img src="docs/slides/05-memory.png" alt="Memory"><br><b>Memory.</b> Your profile, people and facts, which you can view and make it forget.</td>
+<td><img src="docs/slides/06-weather.png" alt="Weather card"><br><b>Cards.</b> Weather, email, calendar, goals and documents show as cards.</td>
+</tr>
+<tr>
+<td><img src="docs/slides/07-voice.png" alt="Voice mode"><br><b>Voice.</b> Hands-free, with Riva speech on NIM. Talk over it to interrupt.</td>
+<td><img src="docs/slides/08-mobile.png" alt="Mobile app"><br><b>Mobile.</b> An installable app with push notifications and share-to-OpenMuse.</td>
+</tr>
+</table>
 
 ## Safety model (short version)
 
@@ -93,7 +152,7 @@ for f in demo*.py; do python "$f" >/dev/null 2>&1 && echo "ok   $f" || echo "FAI
 | `demo_browser.py` | 31 | Browser operator, commit barrier, challenges |
 | `demo_scheduler.py` | 49 | Schedules, hooks, DST, delivery |
 | `demo_connectors.py` | 54 | Connector registry, OAuth, vault |
-| `demo_api.py` | 36 | External API, SSE, approvals, idempotency |
+| `demo_api.py` | 37 | External API, SSE, approvals, idempotency |
 | `demo_production.py` | 72 | Queues, quotas, backup/restore, deletion |
 | `demo_client.py` | 102 | The web client against the real backend |
 | `demo_safety.py` | 43 | Injection, taint, red-team release gate |
@@ -141,4 +200,4 @@ a sandboxed Docker computer (#15), Telegram (#18), and payments, which are
 deprioritised (#20). See [#21](https://github.com/0sparsh2/OpenMuse/issues/21).
 
 OpenMuse is an independent project and isn't affiliated with Meta. It uses its
-own original name, logo and design.
+own original name, mascot and design.

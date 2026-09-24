@@ -1033,6 +1033,8 @@
                           b.text && ("“" + b.text + "”"),
                           who.length && ("Invites: " + who.join(", ")), b.location && ("Where: " + b.location)].filter(Boolean).join("\n") };
       }
+      if (card.tool === "shell.exec") return { title: "OpenMuse wants to run a command",
+        detail: "$ " + (b.command || "") + "\nIn your workspace. Nothing runs until you allow it." };
       if (card.tool === "browser.close_session") return { title: "OpenMuse wants to close the browser", detail: "" };
       if (card.tool === "browser.checkpoint") return { title: "OpenMuse wants to save a checkpoint", detail: "" };
       if (card.tool === "files.write") return { title: "OpenMuse wants to save a file", detail: (card.bindFields || {}).path || "" };

@@ -1030,6 +1030,15 @@ class ApiBackend:
         internal = {"approve": "approved", "deny": "denied",
                     "approved": "approved", "denied": "denied"}[decision]
         grant = self.approvals.resolve(approval_id, internal, decided_by=decided_by)
+        if internal == "denied":
+            # tell the model plainly — otherwise it re-proposes the same action and the user
+            # is asked again and again
+            shown = ", ".join(f"{k}: {v}" for k, v in list((req.bind_fields or {}).items())[:3]
+                              if isinstance(v, (str, int, float)))[:300]
+            self.runs.get(req.run_id).messages.append(ChatMessage(role="user", blocks=[Block(
+                kind="text", text=f"[Policy notice — runtime, trusted.] The user declined {req.tool_name}"
+                                  f"{' (' + shown + ')' if shown else ''}. Don't propose it again in this task. "
+                                  f"Tell them briefly that you didn't do it, and offer another way if there is one.")]))
         self._logs[req.run_id].append("approval.decided",
                                       {"approval_id": approval_id, "verdict": decision,
                                        "via": "api"})

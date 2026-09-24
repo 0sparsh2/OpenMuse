@@ -729,3 +729,5 @@ a.cite:hover, a.cite:focus-visible { background: var(--mc-accent); color: #fff; 
 .drawer .conn-status { display: flex; }
 .drawer .brand, .drawer .drawer-new, .drawer .drawer-search { flex: none; }
 @media (max-width: 480px) { .sidebar.drawer { width: 86vw; } }
+.brand-mascot { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex: none;
+  background: radial-gradient(circle at 50% 35%, #fff7ef 0%, #f6e7da 100%); box-shadow: 0 2px 8px rgba(120,70,40,.15); }

@@ -432,6 +432,33 @@ def main() -> int:
           all(r.request_id.startswith("req_") for r in backend.request_log),
           f"{len(backend.request_log)} requests logged")
 
+    # 12. saying no sticks: a declined action isn't asked for again ------------------------
+    seen_notice = []
+
+    def stubborn(request, history):
+        texts = " ".join(b.text for m in request.messages for b in m.blocks)
+        if "USER_DECLINED" in texts or "declined shell.exec" in texts:
+            seen_notice.append(True)
+            if texts.count("USER_DECLINED") >= 1:
+                return ModelResponse(text="Okay — I didn't run it.", stop_reason="stop")
+        # a model that ignores the first notice and proposes the same command again
+        return ModelResponse(text="", stop_reason="tool_calls", tool_calls=[ToolCall(
+            id=f"sh{len(history or [])}", name="shell.exec", arguments={"command": "ls -la"})])
+    b2 = ApiBackend(workspace_root=tempfile.mkdtemp(prefix="om-deny-"), respond=stubborn)
+    chat = b2.create_session(user_id="usr_d").chat_id
+    run, _, _ = b2.submit_message(chat_id=chat, user_id="usr_d", content=[{"type": "text", "text": "list my files"}])
+    t0 = time.time()
+    while run.state != "WAITING_FOR_APPROVAL" and time.time() - t0 < 10:
+        time.sleep(0.05)
+    req = b2.approvals.requests[b2._pending_approval[run.run_id]]
+    b2.decide_approval(req.id, decision="deny", argument_hash=req.argument_hash, decided_by="test")
+    while run.state not in ("COMPLETED", "FAILED", "CANCELLED") and time.time() - t0 < 20:
+        time.sleep(0.05)
+    asks = [e for e in b2.eventbus.read_since(run.run_id, -1) if e.type == "approval.required"]
+    check("after Deny the model is told, and the same action isn't asked for again",
+          run.state == "COMPLETED" and len(asks) == 1 and seen_notice and run.final_text.startswith("Okay"),
+          f"{run.state} asks={len(asks)}")
+
     server.shutdown()
     hook_srv.shutdown()
     failed = [c for c in CHECKS if not c[1]]

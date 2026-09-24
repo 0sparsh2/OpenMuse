@@ -118,6 +118,11 @@ class ApprovalService:
         self.grants[grant.id] = grant
         return grant
 
+    def was_denied(self, *, run_id: str, tool_name: str, argument_hash: str) -> bool:
+        """The user already said no to this exact action in this run."""
+        return any(r.run_id == run_id and r.tool_name == tool_name and r.argument_hash == argument_hash
+                   and r.status == "denied" for r in self.requests.values())
+
     def find_valid_grant(self, *, run_id: str, tool_name: str, tool_version: str, argument_hash: str) -> ApprovalGrant | None:
         """A grant is valid only for the exact bound argument hash, unexpired and unused."""
         now = time.time()
