@@ -32,6 +32,8 @@ class ToolDefinition:
     # Optional: compact, secret-free card data for clients, fn(output) -> dict
     # (e.g. {"type": "email", "subject": ...}); sent with the tool.result event.
     display: Callable[[dict], dict] | None = None
+    # Optional: how much of the output the model may see (default MODEL_VIEW_CHAR_LIMIT)
+    max_view_chars: int | None = None
 
 
 class UnknownToolError(KeyError):

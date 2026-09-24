@@ -213,10 +213,10 @@ def main() -> int:
         val = page.input_value("textarea[aria-label='Message']")
         check("tapping a slot starts the booking message", val == "Book Thu Sep 24 · 5 PM–8 PM for ", val)
         page.click("#tabbar button[data-tab='connectors']")
-        page.wait_for_selector(".app-alerts input", timeout=10000)
+        page.wait_for_selector("input[aria-label='Tell me about new email']", timeout=10000)
         check("Apps shows the new-email toggle for connected Gmail, reflecting the setting",
-              page.is_checked(".app-alerts input"))
-        page.uncheck(".app-alerts input")
+              page.is_checked("input[aria-label='Tell me about new email']"))
+        page.uncheck("input[aria-label='Tell me about new email']")
         page.wait_for_timeout(500)
         check("…and the toggle turns alerts off", backend.mailwatch.settings(uid)["enabled"] is False)
         browser.close()

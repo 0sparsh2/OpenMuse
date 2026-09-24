@@ -51,6 +51,7 @@ def speakable(text: str) -> str:
     t = re.sub(r"```.*?```", " ", text or "", flags=re.S)
     t = re.sub(r"`([^`]*)`", r"\1", t)
     t = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", t)
+    t = re.sub(r"\s*(\[\d{1,3}(\s*,\s*\d{1,3})*\]|\[\d{1,3}†[^\]]*\]|【[^】]{0,80}】)", "", t)   # citation markers
     t = re.sub(r"https?://\S+", "the link on screen", t)
     t = re.sub(r"[*_#>|~]+", "", t)
     t = re.sub(r"^\s*[-•]\s+", "", t, flags=re.M)

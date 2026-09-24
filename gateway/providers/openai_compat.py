@@ -82,13 +82,27 @@ def _coerce_json_strings(args, schema: dict | None):
     if not isinstance(args, dict) or not schema:
         return args
     props = schema.get("properties") or {}
+    required = set(schema.get("required") or [])
     out = dict(args)
     for key, value in args.items():
         sub = props.get(key) or {}
+        # models often send "" / null for optional fields they mean to leave out
+        # (e.g. "depth": ""), which would fail an enum or integer check
+        if key not in required and (value is None or (value == "" and sub.get("type") != "string")
+                                    or (value == "" and "enum" in sub)):
+            out.pop(key, None)
+            continue
         if isinstance(value, str) and sub.get("type") in ("object", "array"):
             try:
                 decoded = json.loads(value)
             except json.JSONDecodeError:
+                # '[a, b]' written without quotes: accept it as a list of strings
+                if sub.get("type") == "array" and value.strip().startswith("[") and value.strip().endswith("]"):
+                    items = [x.strip().strip("'\"") for x in value.strip()[1:-1].split(",") if x.strip()]
+                    if items:
+                        out[key] = items
+                elif sub.get("type") == "array" and (sub.get("items") or {}).get("type") == "string" and value.strip():
+                    out[key] = [value.strip()]   # a single string where a list was expected
                 continue
             if isinstance(decoded, (dict, list)):
                 value = decoded

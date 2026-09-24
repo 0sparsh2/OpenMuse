@@ -143,6 +143,7 @@
   const TOOL_LABELS = {
     "system.clock": "Clock", "math.calc": "Calculator", "files.read": "Files", "files.write": "Files",
     "files.list": "Files", "web.fetch": "Web", "memory.note": "Memory", "shell.exec": "Terminal",
+    "web.search": "Web search", "web.read": "Web", "web.weather": "Weather",
   };
 
   function hostOf(url) { try { return new URL(url).host.replace(/^www\./, ""); } catch (e) { return url || ""; } }
@@ -185,6 +186,80 @@
     }
     if (inList) html += "</ul>";
     return html;
+  }
+
+  /* -- web citations (search) ------------------------------------------------------------ */
+  function favicon(site) {
+    const i = el("img", { class: "mc-fav", alt: "", width: "16", height: "16", loading: "lazy",
+                          src: "https://icons.duckduckgo.com/ip3/" + encodeURIComponent(site || "") + ".ico" });
+    i.addEventListener("error", () => { i.replaceWith(el("span", { class: "mc-fav mc-fav-l", text: (site || "?")[0].toUpperCase() })); });
+    return i;
+  }
+  function webSources(m) {
+    const map = new Map();
+    (m.blocks || []).forEach((b) => {
+      if (b.display && b.display.type === "web_sources") (b.display.sources || []).forEach((src) => map.set(Number(src.n), src));
+    });
+    return map;
+  }
+  const CITE_RE = /\[(\d{1,3}(?:\s*,\s*\d{1,3})*)\](?!\()|【(\d{1,3}(?:\s*[,，]\s*\d{1,3})*)】/g;
+  function citedNumbers(text) {
+    const out = new Set();
+    String(text || "").replace(CITE_RE, (_, a, b) => { (a || b).split(/[,，\s]+/).forEach((x) => x && out.add(Number(x))); return ""; });
+    return out;
+  }
+  // [1, 3] -> one chip naming the first site (+ how many more), linking to it
+  function renderCited(text, srcs) {
+    const marked = String(text || "").replace(CITE_RE, (_, a, b) => {
+      const ns = (a || b).split(/[,，\s]+/).filter(Boolean).map(Number).filter((n) => srcs.has(n));
+      return ns.length ? "\u0001" + ns.join(",") + "\u0001" : "";
+    }).replace(/\u0001\s*\u0001/g, ",");
+    return renderRich(marked).replace(/\u0001([\d,]+)\u0001/g, (_, list) => {
+      const ns = [...new Set(list.split(",").map(Number))];
+      const first = srcs.get(ns[0]);
+      const title = ns.map((n) => { const s = srcs.get(n); return "[" + n + "] " + (s.title || s.site); }).join("\n")
+        .replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+      return '<a class="cite" href="' + encodeURI(first.url).replace(/"/g, "%22") + '" target="_blank" rel="noopener noreferrer" title="' + title + '">' +
+        String(first.site).replace(/&/g, "&amp;").replace(/</g, "&lt;") + (ns.length > 1 ? " +" + (ns.length - 1) : "") + "</a>";
+    });
+  }
+  function sourceRow(src) {
+    const li = el("li", {});
+    const a = el("a", { href: src.url, target: "_blank", rel: "noopener noreferrer" });
+    a.appendChild(favicon(src.site));
+    const txt = el("span", {});
+    txt.appendChild(el("span", { class: "mc-src-t", text: src.title || src.site }));
+    txt.appendChild(el("span", { class: "mc-src-s", text: src.site + (src.date ? " · " + src.date : "") }));
+    a.appendChild(txt);
+    li.appendChild(el("span", { class: "mc-src-n", text: String(src.n) }));
+    li.appendChild(a);
+    return li;
+  }
+  function sourcesSheet(text, srcs) {
+    const cited = citedNumbers(text);
+    const ov = el("div", { class: "src-sheet-ov" });
+    const sheet = el("div", { class: "src-sheet", role: "dialog", "aria-label": "Sources" });
+    const head = el("div", { class: "src-sheet-h" });
+    head.appendChild(el("strong", { text: "Sources" }));
+    const x = el("button", { type: "button", class: "bv-x", "aria-label": "Close", text: "✕" });
+    head.appendChild(x);
+    sheet.appendChild(head);
+    const groups = [["Cited", [...srcs.values()].filter((s) => cited.has(Number(s.n)))],
+                    ["Also read", [...srcs.values()].filter((s) => !cited.has(Number(s.n)))]];
+    groups.forEach(([label, list]) => {
+      if (!list.length) return;
+      sheet.appendChild(el("div", { class: "src-sheet-g", text: label }));
+      const ol = el("ol", { class: "mc-srcs" });
+      list.forEach((src) => ol.appendChild(sourceRow(src)));
+      sheet.appendChild(ol);
+    });
+    const close = () => ov.remove();
+    x.addEventListener("click", close);
+    ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+    document.addEventListener("keydown", function esc(e) { if (e.key === "Escape") { close(); document.removeEventListener("keydown", esc); } });
+    ov.appendChild(sheet);
+    document.body.appendChild(ov);
+    x.focus();
   }
 
   function fmtTime(ts) {
@@ -503,8 +578,17 @@
         (m.blocks || []).forEach((blk) => thread.appendChild(renderBlock(blk, m)));
         if (m.text) {
           const bub = el("div", { class: "mc-bubble bot" });
-          bub.innerHTML = renderRich(m.text);
+          const srcs = webSources(m);
+          bub.innerHTML = srcs.size ? renderCited(m.text, srcs) : renderRich(m.text);
           thread.appendChild(el("div", { class: "mc-row bot" }, [bub]));
+          if (srcs.size && !m.running) {
+            const btn = el("button", { type: "button", class: "mc-sources-btn" });
+            btn.appendChild(el("span", { class: "mc-favs", "aria-hidden": "true" }));
+            [...srcs.values()].slice(0, 3).forEach((src) => btn.firstChild.appendChild(favicon(src.site)));
+            btn.appendChild(el("span", { text: "Sources" }));
+            btn.addEventListener("click", () => sourcesSheet(m.text, srcs));
+            thread.appendChild(el("div", { class: "mc-row bot" }, [btn]));
+          }
         }
         if (m.error) {
           const bub = el("div", { class: "mc-bubble bot err", text: m.error });
@@ -563,6 +647,7 @@
         nodeCache.set(blk, { sig, node, update: node._update });
         return node;
       }
+      if (blk.display && blk.display.type === "web_sources") return searchStep(blk);
       // Tools render as one quiet line ("🔍 Searched your memory"); only
       // results that carry content (display data) get a card underneath.
       const wrap = el("div", { class: "mc-stepwrap" });
@@ -575,6 +660,32 @@
         if (card) wrap.appendChild(card);
       }
       return wrap;
+    }
+
+    // "Searched the web · 3 searches · read 4 sites" with site icons; expands to queries + sources
+    function searchStep(blk) {
+      const d = blk.display;
+      const det = el("details", { class: "mc-search" });
+      const sum = el("summary", { class: "mc-step done" });
+      sum.innerHTML = '<span class="mc-step-ic">' + STEP_ICONS.web + "</span>";
+      const nq = (d.queries || []).length;
+      sum.appendChild(el("span", { text: (blk.tool === "web.read" ? "Read " + ((d.sources[0] || {}).site || "a page")
+        : "Searched the web" + (nq > 1 ? " · " + nq + " searches" : "") + (d.read ? " · read " + d.read + " site" + (d.read > 1 ? "s" : "") : "")) }));
+      const icons = el("span", { class: "mc-favs", "aria-hidden": "true" });
+      (d.sources || []).slice(0, 5).forEach((src) => icons.appendChild(favicon(src.site)));
+      sum.appendChild(icons);
+      det.appendChild(sum);
+      const body = el("div", { class: "mc-search-body" });
+      if (nq) {
+        const qs = el("div", { class: "mc-queries" });
+        d.queries.forEach((q) => qs.appendChild(el("span", { class: "mc-query", text: q })));
+        body.appendChild(qs);
+      }
+      const ol = el("ol", { class: "mc-srcs" });
+      (d.sources || []).forEach((src) => ol.appendChild(sourceRow(src)));
+      body.appendChild(ol);
+      det.appendChild(body);
+      return det;
     }
 
     function planCard(blk, m) {
@@ -655,7 +766,7 @@
       if (tool.startsWith("memory.")) return STEP_ICONS.brain;
       if (tool.startsWith("files.")) return STEP_ICONS.file;
       if (tool === "system.clock") return STEP_ICONS.clock;
-      if (tool === "web.fetch") return STEP_ICONS.web;
+      if (tool === "web.fetch" || tool === "web.read" || tool === "web.search" || tool === "web.weather") return STEP_ICONS.web;
       if (/search|recall|list|find/.test(tool)) return STEP_ICONS.search;
       return STEP_ICONS.gear;
     }
@@ -672,6 +783,9 @@
         "files.write": ["Saving " + (a.path || "a file"), "Saved " + (a.path || "a file")],
         "files.list": ["Looking at your files", "Looked at your files"],
         "web.fetch": ["Reading " + hostOf(a.url || ""), "Read " + hostOf(a.url || "")],
+        "web.read": ["Reading " + hostOf(a.url || ""), "Read " + hostOf(a.url || "")],
+        "web.search": ["Searching the web", "Searched the web"],
+        "web.weather": ["Checking the weather" + (a.location ? " in " + a.location : ""), "Checked the weather" + (a.location ? " in " + a.location : "")],
         "monitor.create": ["Setting up a watch on " + hostOf(a.url || ""), "Watching " + hostOf(a.url || "")],
         "goals.create": ["Planning your goal", "Planned your goal"],
         "goals.update": ["Updating your goal", "Updated your goal"],
@@ -733,6 +847,24 @@
         });
         if (d.more) ul.appendChild(el("li", { class: "mc-agenda-more", text: "+" + d.more + " more" }));
         card.appendChild(ul);
+      } else if (d.type === "weather") {
+        ic.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="9" r="3.5"/><path d="M9 2.5v1.5M2.5 9H4M4.4 4.4l1 1M13.6 4.4l-1 1M8 20h9a3.5 3.5 0 000-7 5 5 0 00-9.6 1.4A2.9 2.9 0 008 20z"/></svg>';
+        meta.appendChild(el("div", { class: "mc-tool-t", text: d.place }));
+        meta.appendChild(el("div", { class: "mc-tool-s", text: "Weather · Open-Meteo" }));
+        const now = el("div", { class: "mc-wx-now" });
+        now.appendChild(el("strong", { text: Math.round(d.now.temp) + d.unit }));
+        now.appendChild(el("span", { text: d.now.summary + (d.now.feels_like != null ? " · feels like " + Math.round(d.now.feels_like) + d.unit : "") }));
+        card.appendChild(now);
+        const days = el("div", { class: "mc-wx-days" });
+        (d.days || []).forEach((x) => {
+          const day = el("div", { class: "mc-wx-day" });
+          day.appendChild(el("span", { class: "mc-wx-dn", text: new Date(x.date + "T12:00:00").toLocaleDateString(undefined, { weekday: "short" }) }));
+          day.appendChild(el("span", { class: "mc-wx-sum", text: x.summary }));
+          day.appendChild(el("span", { class: "mc-wx-t", text: Math.round(x.high) + "° / " + Math.round(x.low) + "°" }));
+          if (x.rain_chance != null) day.appendChild(el("span", { class: "mc-wx-rain", text: x.rain_chance + "% rain" }));
+          days.appendChild(day);
+        });
+        card.appendChild(days);
       } else if (d.type === "free_slots") {
         ic.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4M9 15l2 2 4-4"/></svg>';
         meta.appendChild(el("div", { class: "mc-tool-t", text: d.title || "Free times" }));
@@ -2535,6 +2667,12 @@
     onEvent(ev, run) {
       if (!this.ui || !run || run.runId !== this.runId) return;
       const d = ev.data || {};
+      if (ev.name === "tool.call" && /^web\.(search|read|weather)$/.test(d.tool || "") && !this.spoken && !this.playing) {
+        this.enqueue(d.tool === "web.weather" ? "Checking the weather." : "Let me look that up.");
+        this.spoken = "";      // don't treat the filler as part of the answer
+        this.stepText = "";
+        return;
+      }
       if (ev.name === "approval.required") {
         API.getApproval(d.approval_id).then((card) => {
           const desc = state.describeApproval ? state.describeApproval(card) : { title: "OpenMuse needs your OK" };
@@ -2575,10 +2713,25 @@
       while ((m = re.exec(this.pendingText))) { parts.push(m[0]); last = re.lastIndex; }
       let rest = this.pendingText.slice(last);
       if (final && rest.trim()) { parts.push(rest); rest = ""; }
+      // the first thing said should be short (speech time grows with length): break a long
+      // opening sentence at a clause ("Buddy is a classic name, | friendly and easy to call")
+      if (!this.spoken) {
+        const head = parts.length ? parts[0] : rest;
+        if (head.length > 70) {
+          const m = /^(.{12,80}?[,;:—–])\s/.exec(head);
+          if (m) {
+            if (parts.length) parts.splice(0, 1, m[1], head.slice(m[0].length));
+            else { parts.unshift(m[1]); rest = rest.slice(m[0].length); }
+          }
+        }
+      }
       this.pendingText = rest;
       // merge tiny fragments so each TTS call carries a natural phrase
       const chunks = [];
-      parts.forEach((p) => { if (chunks.length && chunks[chunks.length - 1].length < 40) chunks[chunks.length - 1] += p; else chunks.push(p); });
+      parts.forEach((p, idx) => {
+        const opener = !this.spoken && idx === 1 && chunks.length === 1;   // keep the quick first clause on its own
+        if (chunks.length && chunks[chunks.length - 1].length < 40 && !opener) chunks[chunks.length - 1] += p; else chunks.push(p);
+      });
       chunks.forEach((c) => { if (c.trim()) this.enqueue(c.trim()); });
       if (this.ui) this.ui.querySelector(".vm-reply").textContent = (this.spoken + this.pendingText).trim();
     },
@@ -2607,6 +2760,7 @@
 
     async playNext() {
       const item = this.queue.shift();
+      if (item) (this.spokenOrder = this.spokenOrder || []).push(item.text);   // what was played, in order
       if (!item) {
         this.playing = null;
         if (this.ui && this.state === "speaking") this.listen();
@@ -2861,6 +3015,20 @@
     root.innerHTML = "";
     root.classList.add("memv");
     root.appendChild(el("div", { class: "memv-head", html: "<h1>Apps</h1><p class='muted'>Connect your accounts so OpenMuse can help with them. Reading is automatic; sending email or changing your calendar always asks you first. Only you can use your connections.</p>" }));
+    // built in: web search (issue: ChatGPT-style search)
+    const ws = el("div", { class: "app-builtin" });
+    ws.innerHTML = '<div><strong>Web search</strong><span class="memv-meta">Built in · DuckDuckGo · answers cite their sources</span></div>';
+    const wlab = el("label", { class: "app-alerts" });
+    const wcb = el("input", { type: "checkbox", id: "searchAuto", "aria-label": "Search the web automatically" });
+    wlab.appendChild(wcb); wlab.appendChild(document.createTextNode(" Search automatically when a question needs it"));
+    ws.appendChild(wlab);
+    root.appendChild(ws);
+    API.req("GET", "/v1/settings/search").then((r) => { wcb.checked = !!r.auto; }).catch(() => { ws.hidden = true; });
+    wcb.addEventListener("change", async () => {
+      try { await API.req("PUT", "/v1/settings/search", { body: { auto: wcb.checked } });
+            toast(wcb.checked ? "OpenMuse will search the web when a question needs it." : "OpenMuse will only search when you ask."); }
+      catch (e) { wcb.checked = !wcb.checked; toast("Couldn't change that: " + e.message); }
+    });
     const grid = el("div", { class: "apps-grid" });
     root.appendChild(grid);
     let polling = null;

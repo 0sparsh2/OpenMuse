@@ -90,6 +90,18 @@ tools:
     risk: R0
     capabilities: [network.fetch.public]
     side_effect: none
+  web.search:
+    risk: R0
+    capabilities: [network.fetch.public]
+    side_effect: none
+  web.read:
+    risk: R0
+    capabilities: [network.fetch.public]
+    side_effect: none
+  web.weather:
+    risk: R0
+    capabilities: [network.fetch.public]
+    side_effect: none
   tools.load_namespace:
     risk: R0
     capabilities: [tools.discover]

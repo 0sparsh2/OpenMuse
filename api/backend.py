@@ -102,7 +102,7 @@ class ApiBackend:
         # Deferred discovery (tools.load_namespace) still works for the rest;
         # it mutates the registry's set, which the shared server registry
         # tolerates because the context builder reads run.loaded_namespaces.
-        self.default_namespaces = default_namespaces or {"system", "files", "task"}
+        self.default_namespaces = default_namespaces or {"system", "files", "task", "web"}
         self.keys = ApiKeyStore()
         self.runs = RunStore()
         self.registry = build_registry()
@@ -224,6 +224,14 @@ class ApiBackend:
         # Saved logins + downloads for the live browser (issue #16).
         self.logins = None
         self.voice = voice  # speech in/out for voice mode (issue #19)
+        # Web search router: a first-step hint per run ("look this up first"), computed
+        # in parallel with context building (rules, then Jev when rules can't tell)
+        self._search_hints: dict[str, tuple] = {}
+        self.citation_stats: dict[str, dict] = {}
+        self._hint_pool = None
+        self.context_builder.runtime_notes_provider = self._runtime_notes
+        from tools.namespaces import web_tools
+        web_tools.region_for = self._search_region
         # Web Push to installed PWAs (issue #17): every notification also buzzes the user's devices
         self.push = None
         if push_key_file:
@@ -457,6 +465,71 @@ class ApiBackend:
             print(f"memory context failed: {exc}", flush=True)
             return [], None
 
+    # -- web search router + settings -----------------------------------------------------
+    def search_prefs(self, user_id: str) -> dict:
+        rec = self.db.kv_get("prefs", "search:" + user_id) if self.db is not None else \
+            getattr(self, "_prefs_mem", {}).get(user_id)
+        return {"auto": True, **(rec or {})}
+
+    def set_search_prefs(self, user_id: str, *, auto: bool) -> dict:
+        rec = {"auto": bool(auto)}
+        if self.db is not None:
+            self.db.kv_put("prefs", "search:" + user_id, rec, user_id=user_id)
+        else:
+            if not hasattr(self, "_prefs_mem"):
+                self._prefs_mem = {}
+            self._prefs_mem[user_id] = rec
+        return self.search_prefs(user_id)
+
+    def _start_search_hint(self, run_id: str, user_id: str, text: str) -> None:
+        if not self.search_prefs(user_id)["auto"]:
+            return
+        from concurrent.futures import ThreadPoolExecutor
+        from search import router
+        from search.jev import default_jev
+        if self._hint_pool is None:
+            self._hint_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="search-router")
+        today = time.strftime("%Y-%m-%d")
+        fut = self._hint_pool.submit(router.decide, text, jev=default_jev(), today=today)
+        self._search_hints[run_id] = (fut, time.time())
+
+    def _runtime_notes(self, run) -> list[str]:
+        entry = self._search_hints.get(run.run_id)
+        if entry is None or run.step != 0:
+            return []
+        fut, started = entry
+        from search import router
+        try:  # never hold the turn more than ~1.2s after submit for a hint
+            hint = fut.result(timeout=max(0.05, 1.2 - (time.time() - started)))
+        except Exception:
+            return []
+        self._logs.get(run.run_id) and self._logs[run.run_id].append("search.route", {
+            "search": hint.search, "p": hint.p, "by": hint.by, "reason": hint.reason,
+            "recency_days": hint.recency_days})
+        note = router.note_for(hint)
+        return [note] if note else []
+
+    def _search_region(self, user_id: str) -> str:
+        tz = self.user_timezone(user_id) if user_id else ""
+        return {"Asia/Kolkata": "in-en", "Asia/Calcutta": "in-en", "Europe/London": "uk-en", "Europe/Dublin": "ie-en",
+                "Australia/": "au-en", "America/Toronto": "ca-en", "America/Vancouver": "ca-en",
+                "Asia/Singapore": "sg-en", "Europe/Berlin": "de-de", "Europe/Paris": "fr-fr",
+                "Asia/Tokyo": "jp-jp", "America/": "us-en"}.get(tz, next(
+                    (v for k, v in {"Australia/": "au-en", "America/": "us-en"}.items() if tz.startswith(k)), "wt-wt"))
+
+    def _verify_citations(self, run) -> None:
+        """Drop [n] markers the cited web source doesn't support (web.search runs only)."""
+        from tools.namespaces import web_tools
+        svc = web_tools.SERVICE
+        if svc is None or not svc.sources(run.run_id):
+            return
+        try:
+            fixed, stats = svc.verify_citations(run.run_id, run.final_text)
+        except Exception:
+            return
+        self.citation_stats[run.run_id] = stats  # {"checked": n, "removed": m}
+        run.final_text = fixed
+
     def _run_lock(self, run_id: str) -> threading.Lock:
         return self._run_locks.setdefault(run_id, threading.Lock())
 
@@ -509,6 +582,8 @@ class ApiBackend:
         )
         if created:
             run.mode = mode if mode in ("voice",) else ""
+            self._start_search_hint(run.run_id, user_id, " ".join(
+                b.text for b in msg.blocks if b.kind == "text")[:3000])
             if run.mode == "voice":
                 # spoken turns stream tokens so speech can start after the first sentence
                 from gateway import streaming
@@ -863,6 +938,7 @@ class ApiBackend:
                             s["status"] = "done"
                             self.eventbus.publish(run_id, "task.step", {"id": s["id"], "status": "done", "note": ""})
                 if run.final_text:
+                    self._verify_citations(run)
                     self.eventbus.publish(run_id, M.SSE_ASSISTANT_DELTA,
                                           {"text": run.final_text})
                 self.eventbus.publish(run_id, M.SSE_RUN_COMPLETED, {

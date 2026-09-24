@@ -98,6 +98,8 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         ("DELETE", r"^/v1/logins/(?P<lid>lg_[a-f0-9]+)$", "logins_delete", "sessions:write", False),
         ("GET", r"^/v1/push/config$", "push_config", "sessions:read", False),
         ("GET", r"^/v1/voice/config$", "voice_config", "sessions:read", False),
+        ("GET", r"^/v1/settings/search$", "search_prefs_get", "sessions:read", False),
+        ("PUT", r"^/v1/settings/search$", "search_prefs_put", "sessions:write", False),
         ("GET", r"^/v1/apps/gmail/alerts$", "mail_alerts_get", "sessions:read", False),
         ("PUT", r"^/v1/apps/gmail/alerts$", "mail_alerts_put", "sessions:write", False),
         ("POST", r"^/v1/voice/transcribe$", "voice_transcribe", "sessions:write", False),
@@ -630,6 +632,15 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         finally:
             self.backend._note_listeners.remove(listener)
         return None
+
+    # -- web search settings -------------------------------------------------------------
+    def h_search_prefs_get(self, params):
+        return 200, {**self.backend.search_prefs(self._uid()), "engine": "duckduckgo",
+                     "decisions": "jev" if os.environ.get("JEV_API_KEY") else "embeddings"}, None
+
+    def h_search_prefs_put(self, params):
+        b = self._parse_json()
+        return 200, self.backend.set_search_prefs(self._uid(), auto=bool(b.get("auto", True))), None
 
     # -- new-mail alerts (issue #8) -----------------------------------------------------
     def _mailwatch(self):

@@ -7,3 +7,5 @@ openpyxl>=3.1
 cryptography>=42
 pywebpush>=2.0
 nvidia-riva-client>=2.15
+ddgs>=9.0
+trafilatura>=2.0

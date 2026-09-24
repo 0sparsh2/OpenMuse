@@ -659,3 +659,44 @@ body { background: linear-gradient(135deg, #fbf7ef 0%, #f3f1fb 45%, #e3f0fc 100%
 .mc-slot:hover, .mc-slot:focus-visible { border-color: var(--mc-accent); color: var(--mc-accent); }
 .app-alerts { display: flex; align-items: center; gap: 8px; font-size: 13.5px; margin-top: 10px; min-height: 32px; }
 .app-alerts input { width: 18px; height: 18px; margin: 0; }
+
+/* web search: step, citations, sources (search) */
+.mc-search { align-self: stretch; }
+.mc-search > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+.mc-search > summary::-webkit-details-marker { display: none; }
+.mc-favs { display: inline-flex; margin-left: 4px; }
+.mc-fav { width: 16px; height: 16px; border-radius: 50%; background: var(--mc-pill); box-shadow: 0 0 0 2px var(--mc-bg, #fff); }
+.mc-favs .mc-fav + .mc-fav { margin-left: -5px; }
+.mc-fav-l { display: inline-grid; place-items: center; font: 600 9px/1 var(--om-font); color: var(--mc-muted); }
+.mc-search-body { padding: 4px 16px 6px 40px; }
+.mc-queries { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.mc-query { font-size: 12.5px; padding: 4px 10px; border-radius: 999px; background: var(--mc-bot); color: var(--mc-bot-text); }
+.mc-srcs { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.mc-srcs li { display: flex; gap: 10px; align-items: flex-start; }
+.mc-src-n { font: 600 11px/1 var(--om-font); color: var(--mc-muted); min-width: 16px; padding-top: 10px; text-align: right; }
+.mc-srcs a { display: flex; gap: 10px; align-items: flex-start; text-decoration: none; color: inherit; padding: 6px 8px; border-radius: 10px; flex: 1; min-width: 0; }
+.mc-srcs a:hover, .mc-srcs a:focus-visible { background: var(--mc-bot); }
+.mc-srcs .mc-fav { margin-top: 2px; flex: none; }
+.mc-src-t { display: block; font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mc-src-s { display: block; font-size: 12px; color: var(--mc-muted); }
+a.cite { display: inline-block; font: 500 11.5px/1.5 var(--om-font); padding: 0 7px; margin: 0 1px; border-radius: 999px;
+  background: var(--mc-bot); color: var(--mc-bot-text); text-decoration: none; vertical-align: 1px; white-space: nowrap; max-width: 14em; overflow: hidden; text-overflow: ellipsis; }
+a.cite:hover, a.cite:focus-visible { background: var(--mc-accent); color: #fff; }
+.mc-sources-btn { display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 999px; padding: 6px 12px 6px 8px;
+  background: var(--mc-bot); color: var(--mc-bot-text); font: 500 13px var(--om-font); cursor: pointer; margin-left: 4px; }
+.src-sheet-ov { position: fixed; inset: 0; z-index: 85; background: rgba(10,12,16,.35); display: flex; justify-content: flex-end; animation: mc-fade .15s ease-out; }
+.src-sheet { width: min(420px, 100%); height: 100%; overflow-y: auto; background: var(--mc-pill); box-shadow: -20px 0 50px rgba(0,0,0,.18);
+  padding: calc(16px + env(safe-area-inset-top)) 14px calc(16px + env(safe-area-inset-bottom)); }
+.src-sheet-h { display: flex; justify-content: space-between; align-items: center; padding: 0 4px 10px; }
+.src-sheet-g { font: 600 11.5px/1 var(--om-font); letter-spacing: .06em; text-transform: uppercase; color: var(--mc-muted); padding: 14px 6px 6px; }
+.mc-wx-now { display: flex; align-items: baseline; gap: 10px; margin: 2px 0 10px; }
+.mc-wx-now strong { font-size: 30px; font-weight: 600; }
+.mc-wx-now span { color: var(--mc-muted); font-size: 14px; }
+.mc-wx-days { display: grid; grid-template-columns: repeat(auto-fit, minmax(78px, 1fr)); gap: 6px; }
+.mc-wx-day { background: var(--mc-bot); border-radius: 12px; padding: 8px; display: grid; gap: 2px; font-size: 12.5px; }
+.mc-wx-dn { font-weight: 600; }
+.mc-wx-sum, .mc-wx-rain { color: var(--mc-muted); }
+.app-builtin { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px;
+  background: var(--mc-card, var(--mc-pill)); border-radius: 18px; padding: 14px 16px; margin-bottom: 14px; }
+.app-builtin strong { display: block; }
+@media (max-width: 640px) { .src-sheet { width: 100%; } }

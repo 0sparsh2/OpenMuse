@@ -58,6 +58,9 @@ class ContextBuilder:
         self.memory_provider = memory_provider
         # Optional per-run IANA timezone (e.g. from the user's USER.md).
         self.timezone_provider = None
+        # Optional per-run trusted notes appended last: fn(run) -> list[str]
+        # (e.g. the search router's "look this up first" on the first step).
+        self.runtime_notes_provider = None
         self.registry = registry
         self.user_files_dir = user_files_dir
         self.agent_name = agent_name
@@ -117,6 +120,12 @@ class ContextBuilder:
                     blocks=[Block(kind="text", text="WORKING MEMORY (turn-scoped):\n" + wm_text)],
                 ))
         messages.extend(compact_browser_history(run.messages))  # 2,3,7,8 live here as typed blocks
+        if self.runtime_notes_provider is not None:
+            try:
+                for note in self.runtime_notes_provider(run) or []:
+                    messages.append(ChatMessage(role="user", blocks=[Block(kind="text", trust="user", text=note)]))
+            except Exception:
+                pass  # a hint must never break a turn
         if getattr(run, "mode", "") == "voice":
             # last thing the model reads, so a chat full of long written answers
             # doesn't pull a spoken reply back into lists and markdown

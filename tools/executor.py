@@ -133,11 +133,11 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _bounded_model_view(output: Any) -> tuple[Any, bool]:
+def _bounded_model_view(output: Any, limit: int = MODEL_VIEW_CHAR_LIMIT) -> tuple[Any, bool]:
     """Truncate the model view; return (view, truncated)."""
     text = output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)
-    if len(text) > MODEL_VIEW_CHAR_LIMIT:
-        view = text[:MODEL_VIEW_CHAR_LIMIT] + f"\n…[truncated {len(text) - MODEL_VIEW_CHAR_LIMIT} chars]"
+    if len(text) > limit:
+        view = text[:limit] + f"\n…[truncated {len(text) - limit} chars]"
         return (view if isinstance(output, str) else {"truncated_text": view}), True
     return output, False
 
@@ -199,7 +199,7 @@ def _execute_one(ctx: ExecutionContext, call: PrevalidatedCall) -> dict:
     except ValidationError as exc:
         return _failed_envelope(call, "INVALID_TOOL_OUTPUT", f"{call.tool_name} returned malformed output: {exc.message}")
 
-    view, truncated = _bounded_model_view(output)
+    view, truncated = _bounded_model_view(output, getattr(call.tool, "max_view_chars", None) or MODEL_VIEW_CHAR_LIMIT)
     view, redactions = _redact_view(view)
     latency_ms = int((time.monotonic() - t0) * 1000)
 
