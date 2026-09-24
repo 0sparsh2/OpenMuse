@@ -41,8 +41,12 @@ approvals, notifications and per-user settings, so nothing is lost on restart.
    `system`, `files`, `task`, `web` and `memory`, plus connected apps, load by
    default; others load on demand (`tools.load_namespace`).
 3. **Call the model** (`gateway/`). The request goes through the
-   OpenAI-compatible provider, with retries and a fallback model.
-   Voice runs stream tokens to the client as `assistant.partial`.
+   OpenAI-compatible provider, with retries and a fallback model. Every turn
+   streams its words as they're written: `gateway/streaming.py` groups tokens
+   into short chunks and sends them as `assistant.partial` events, which aren't
+   stored individually. A retry after a dropped connection sends a reset, and a
+   stream that ends without the model's end signal counts as a failure, not as
+   a finished answer.
 4. **Evaluate proposed tool calls** (`agent/turn_engine.py`). Each call is
    validated against its schema, hashed, and checked by the policy engine
    (`policy/engine.py`), which returns ALLOW, ASK or DENY.

@@ -570,8 +570,11 @@
     /* -- thread rendering --------------------------------------------------- */
     function renderThread() {
       const nearBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 120;
-      thread.innerHTML = "";
       const chat = state.chats[state.activeChat];
+      // redrawing the same chat mid-run (streaming text, status): don't replay every fade-in
+      thread.classList.toggle("redraw", !!(activeRun && chat && thread.dataset.chat === chat.chatId && thread.childElementCount));
+      thread.dataset.chat = chat ? chat.chatId : "";
+      thread.innerHTML = "";
       if (!chat || !chat.messages.length) {
         const empty = el("div", { class: "mc-empty" });
         empty.innerHTML = '<div class="mc-avatar big">' + AVATAR_SVG + "</div><h2>What can I do for you?</h2>" +
@@ -607,6 +610,15 @@
           return;
         }
         (m.blocks || []).forEach((blk) => thread.appendChild(renderBlock(blk, m)));
+        if (!m.text && m.running && m.streamText && m.streamText.trim()) {
+          // still being written: show it now, with chips for sources already found;
+          // hide a marker that's only half-typed ("[1", "【")
+          const live = el("div", { class: "mc-bubble bot streaming" });
+          const partial = m.streamText.replace(/[\[【][^\]】]{0,40}$/, "");
+          const srcsNow = webSources(m);
+          live.innerHTML = srcsNow.size ? renderCited(partial, srcsNow) : renderRich(String(partial).replace(CITE_RE, ""));
+          thread.appendChild(el("div", { class: "mc-row bot" }, [live]));
+        }
         if (m.text) {
           const bub = el("div", { class: "mc-bubble bot" });
           const srcs = webSources(m);
@@ -643,7 +655,7 @@
           });
           thread.appendChild(el("div", { class: "mc-row bot" }, [det]));
         }
-        if (m.running && !m.text && !m.waiting) {
+        if (m.running && !m.text && !m.waiting && !(m.streamText && m.streamText.trim())) {
           const dots = el("div", { class: "mc-typing", "aria-label": "OpenMuse is working" });
           dots.innerHTML = "<i></i><i></i><i></i>";
           thread.appendChild(el("div", { class: "mc-row bot" }, [dots]));
@@ -1323,8 +1335,16 @@
           setStatus("Paused", '<span class="mc-paused-ic">❚❚</span>');
           updateCtrl();
           break;
+        case "assistant.partial":          // the answer as it's being written
+          if (d.reset || d.step !== amsg.streamStep) { amsg.streamStep = d.step; amsg.streamText = ""; }
+          if (d.text) {
+            amsg.streamText = (amsg.streamText || "") + d.text;
+            if (!amsg.waiting) setStatus("Writing");
+          }
+          break;
         case "assistant.delta":
           amsg.text += d.text || d.delta || "";
+          amsg.streamText = "";
           break;
         case "run.completed":
           if (d.final_text) amsg.text = d.final_text;
@@ -2712,6 +2732,7 @@
           }
         }).catch(() => {});
       } else if (ev.name === "assistant.partial") {           // live tokens (voice runs stream)
+        if (d.reset) { if (d.step === this.stepNo) this.stepText = ""; return; }
         if (d.step !== this.stepNo) { this.stepNo = d.step; this.stepText = ""; }
         this.stepText += d.text || "";
         this.feed(d.text || "", false);

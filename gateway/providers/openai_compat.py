@@ -254,12 +254,19 @@ class OpenAICompatProvider(Provider):
         """Assemble a streamed chat completion into the non-streamed shape,
         passing each content delta to the sink as it arrives."""
         content, calls, finish, usage = [], {}, "", {}
+        done = False
+        if hasattr(sink, "start"):
+            try:
+                sink.start(step)      # a retry restarts the step: listeners drop half-written text
+            except Exception:
+                pass
         try:
             for raw in resp.iter_lines(decode_unicode=True):
                 if not raw or not raw.startswith("data:"):
                     continue
                 chunk = raw[5:].strip()
                 if chunk == "[DONE]":
+                    done = True
                     break
                 try:
                     obj = json.loads(chunk)
@@ -286,6 +293,14 @@ class OpenAICompatProvider(Provider):
                         finish = ch["finish_reason"]
         except requests.RequestException as exc:
             raise ProviderError(TRANSIENT, f"provider stream interrupted: {exc}", retryable=True)
+        if not done and not finish:
+            # the connection closed mid-answer: a cut-off reply must not pass as a whole one
+            raise ProviderError(TRANSIENT, "provider stream ended early", retryable=True)
+        if hasattr(sink, "end"):
+            try:
+                sink.end(step)        # flush whatever is still buffered
+            except Exception:
+                pass
         message = {"content": "".join(content),
                    "tool_calls": [calls[i] for i in sorted(calls)] or None}
         return {"choices": [{"message": message, "finish_reason": finish}], "usage": usage}

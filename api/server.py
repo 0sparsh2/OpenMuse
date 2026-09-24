@@ -431,7 +431,7 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
                     break
                 if time.monotonic() > deadline:
                     break
-                time.sleep(0.2)
+                time.sleep(0.1)
                 # refresh run state without holding stale refs
                 run = self._get_run(params["rid"])
         except (BrokenPipeError, ConnectionResetError):

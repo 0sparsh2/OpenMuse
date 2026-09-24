@@ -179,7 +179,8 @@ class ApiBackend:
 
             def publish(run_id, type, data, _publish=_publish):
                 evt = _publish(run_id, type, data)
-                self.db.append_event(run_id, evt.seq, evt.type, evt.data, evt.occurred_at)
+                if type != "assistant.partial":   # streamed text is transient; the final answer is saved
+                    self.db.append_event(run_id, evt.seq, evt.type, evt.data, evt.occurred_at)
                 return evt
             self.eventbus.publish = publish
 
@@ -626,11 +627,12 @@ class ApiBackend:
             run.mode = mode if mode in ("voice",) else ""
             self._start_search_hint(run.run_id, user_id, " ".join(
                 b.text for b in msg.blocks if b.kind == "text")[:3000])
-            if run.mode == "voice":
-                # spoken turns stream tokens so speech can start after the first sentence
-                from gateway import streaming
-                streaming.register(run.run_id, lambda text, step, rid=run.run_id: self.eventbus.publish(
-                    rid, "assistant.partial", {"text": text, "step": step}))
+            # every turn streams its words as they're written (voice also speaks them early)
+            from gateway import streaming
+            streaming.register(run.run_id, streaming.PartialText(
+                lambda text, step, rid=run.run_id: self.eventbus.publish(
+                    rid, "assistant.partial", {"reset": True, "step": step} if text is None
+                    else {"text": text, "step": step})))
             self._run_text[run.run_id] = " ".join(
                 b.text for b in msg.blocks if b.kind == "text")[:4000]
             session = self.sessions.get(chat_id)
@@ -730,9 +732,8 @@ class ApiBackend:
             self._finish_run(run_id)
             self._record_receipt(run)
             self._notify_run_end(run)
-            if run.mode == "voice":
-                from gateway import streaming
-                streaming.unregister(run_id)
+            from gateway import streaming
+            streaming.unregister(run_id)
             if self.memory is not None and run.state == "COMPLETED":
                 # asynchronous by design: learning never slows the turn
                 noted = any(e.type == "tool.result" and e.payload.get("tool") == "memory.note"

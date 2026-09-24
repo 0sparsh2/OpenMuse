@@ -10,7 +10,7 @@ something, signs in, or can't be undone waits for your approval.
   The UI is a static single-page app with no build step.
 - **Models:** NVIDIA NIM through an OpenAI-compatible API. The default is Nemotron.
   NIM also provides embeddings (memory, search ranking) and Riva speech (voice).
-- **Status:** 23 test suites; every check passes except the live voice-latency
+- **Status:** 24 test suites; every check passes except the live voice-latency
   one, which varies with NVIDIA's hosted speech service. The roadmap is tracked
   in [issue #21](https://github.com/0sparsh2/OpenMuse/issues/21).
 
@@ -18,7 +18,7 @@ something, signs in, or can't be undone waits for your approval.
 
 | Area | What you get |
 |---|---|
-| **Chat** | Streaming answers, one-line tool steps, result cards, task plans with pause/resume/retry, chat history per user. |
+| **Chat** | Answers stream in as they're written, one-line tool steps, result cards, task plans with pause/resume/retry, chat history per user. |
 | **Web search** | ChatGPT-style search: parallel queries with recency filters, pages actually read, answers with clickable citations and a Sources panel, weather cards. Keyless, using DuckDuckGo. Automatic when a question needs it; can be turned off in Apps. See [docs/WEB_SEARCH.md](docs/WEB_SEARCH.md). |
 | **Computer use** | A real Chromium browser, streamed live. "Take control" lets you drive it yourself. It pauses for human checks, and purchases or bookings need your approval (commit barrier). Saved logins are encrypted and never shown to the model. Downloads go to your Library. |
 | **Memory** | Per-user layered memory: profile, curated facts, journal, people pages, and a document knowledge bank with NIM embeddings. It learns from conversations, and you can view it and make it forget. |
@@ -110,6 +110,7 @@ for f in demo*.py; do python "$f" >/dev/null 2>&1 && echo "ok   $f" || echo "FAI
 | `demo_mail.py` | 24 | Attachments, new-mail alerts, free-time card |
 | `demo_search.py` | 68 | Web search, network guard, router, citations, sources, UI |
 | `demo_cu_jev.py` | 16 | Jev in the browser (fake and real Jev) |
+| `demo_stream.py` | 10 | Streaming answers: chunking, streamed tool calls, retry after a dropped connection, the growing bubble |
 
 ## Project layout
 

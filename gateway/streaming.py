@@ -30,3 +30,42 @@ def sink_for(run_id: str | None):
         return None
     with _lock:
         return _sinks.get(run_id)
+
+
+class PartialText:
+    """Coalesces streamed tokens into chunks (~every 60 chars, 120 ms, or a line
+    break) and hands them to `emit(text, step)`; `emit(None, step)` = reset."""
+
+    def __init__(self, emit, *, min_chars: int = 60, max_wait: float = 0.12):
+        import time as _t
+        self._t = _t
+        self.emit = emit
+        self.min_chars, self.max_wait = min_chars, max_wait
+        self.buf, self.step, self.last = "", None, 0.0
+        self.lock = threading.Lock()
+
+    def _flush(self):
+        if self.buf:
+            text, self.buf = self.buf, ""
+            self.last = self._t.monotonic()
+            self.emit(text, self.step)
+
+    def start(self, step: int) -> None:
+        with self.lock:
+            self.buf, self.step = "", step
+            self.last = self._t.monotonic()
+            self.emit(None, step)
+
+    def __call__(self, text: str, step: int) -> None:
+        with self.lock:
+            if step != self.step:
+                self._flush()
+                self.step = step
+            self.buf += text or ""
+            if (len(self.buf) >= self.min_chars or "\n" in text
+                    or self._t.monotonic() - self.last >= self.max_wait):
+                self._flush()
+
+    def end(self, step: int) -> None:
+        with self.lock:
+            self._flush()

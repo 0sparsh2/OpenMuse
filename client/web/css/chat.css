@@ -711,3 +711,10 @@ a.cite:hover, a.cite:focus-visible { background: var(--mc-accent); color: #fff; 
 .mc-srcchip .mc-fav { box-shadow: none; }
 .mc-srcchip-all { padding: 4px 12px; color: var(--mc-muted); }
 .mc-srcchip:hover, .mc-srcchip:focus-visible { background: var(--mc-accent); color: #fff; }
+
+/* streaming answer: a soft caret while it's being written */
+.mc-bubble.streaming > :last-child::after { content: ""; display: inline-block; width: 7px; height: 1em; margin-left: 3px;
+  vertical-align: -2px; border-radius: 2px; background: var(--mc-muted); animation: mc-pulse 1s infinite; }
+@media (prefers-reduced-motion: reduce) { .mc-bubble.streaming > :last-child::after { animation: none; } }
+.mc-thread.redraw .mc-bubble, .mc-thread.redraw .mc-card, .mc-thread.redraw .mc-plan,
+.mc-thread.redraw .mc-row > * { animation: none; }
