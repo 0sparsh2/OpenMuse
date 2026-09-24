@@ -297,17 +297,27 @@ class WebSearch:
                       lambda m: "[" + ", ".join(dict.fromkeys(re.findall(r"\d{1,3}", m.group(0)))) + "]", text)
         return text
 
-    SOURCES_LINE = re.compile(r"^[ \t>*_-]*(?:\*\*)?(?:sources?|references?|citations?|cited)(?:\*\*)?\s*[:：-]?\s*(?:\*\*)?\s*"
-                              r"((?:\[\d{1,3}(?:\s*,\s*\d{1,3})*\]|[\s,;.&]|and)*)\s*$", re.I | re.M)
+    # "Sources: [1][2] (all dated 16 Sept)" / "**References:** [3]" / "Sources [1], [2]"
+    SOURCES_LINE = re.compile(r"^[ \t>*_-]*(?:\*\*)?(?:sources?|references?|citations?|cited)(?:\*\*)?"
+                              r"(?:\s*[:：-]\s*(?:\*\*)?(?P<rest>.*)|(?P<only>(?:\s*(?:\[\d{1,3}(?:\s*,\s*\d{1,3})*\]|[,;.&]|and))+\s*))$",
+                              re.I | re.M)
 
     @classmethod
     def split_sources_line(cls, text: str) -> tuple[str, set[int]]:
-        """A model-written "Sources: [1], [2]" line isn't a claim: take it out (the app
-        shows sources under the answer) and remember which numbers it listed."""
+        """A model-written sources line isn't a claim: take its numbers as "cited" (the app
+        lists sources under the answer) and drop the line, keeping any real note in it."""
         listed: set[int] = set()
 
         def take(m):
-            listed.update(int(n) for n in re.findall(r"\d{1,3}", m.group(1) or ""))
+            rest = m.group("rest") if m.group("rest") is not None else (m.group("only") or "")
+            marks = re.findall(r"\[(\d{1,3}(?:\s*,\s*\d{1,3})*)\]", rest)
+            if m.group("rest") is not None and not marks and len(re.findall(r"[A-Za-z]{2,}", rest)) > 0:
+                return m.group(0)          # "Sources: the council's report" — prose, leave it
+            listed.update(int(n) for grp in marks for n in re.findall(r"\d{1,3}", grp))
+            note = re.sub(r"\[\d{1,3}(?:\s*,\s*\d{1,3})*\]", "", rest)
+            note = re.sub(r"^[\s,;.&()]+|[\s,;.()]+$", "", re.sub(r"^\s*and\b", "", note)).strip()
+            if len(re.findall(r"[A-Za-z]{2,}", note)) >= 3:
+                return note[0].upper() + note[1:] + "."
             return ""
         text = cls.SOURCES_LINE.sub(take, text or "")
         return re.sub(r"\n{3,}", "\n\n", text).rstrip(), listed

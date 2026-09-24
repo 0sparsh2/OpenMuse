@@ -206,6 +206,13 @@ def main() -> int:
     check("…including bold variants, but not sentences that mention sources",
           WebSearch.split_sources_line("**Sources:** [1, 2] and [5]") == ("", {1, 2, 5})
           and WebSearch.split_sources_line("The sources say it's sunny [1].")[1] == set())
+    check("a sources line with a note keeps the note as a sentence",
+          WebSearch.split_sources_line(WebSearch.normalize_citations(
+              "Sources: [1][2][3] (all dated 16 Sept 2026, reporting the BCCI announcement).")) ==
+          ("All dated 16 Sept 2026, reporting the BCCI announcement.", {1, 2, 3}))
+    check("…while prose that starts with 'Sources' is left alone",
+          WebSearch.split_sources_line("Sources say it's sunny [1].")[1] == set()
+          and WebSearch.split_sources_line("Sources: the council's 2025 report.")[1] == set())
     check("removed markers never leave ',,,' or an empty 'Sources:' line",
           WebSearch.tidy("Kabaddi 49-24 , , .\n\nSources:,,,.") == "Kabaddi 49-24.")
     stale = ws.search("run_y", ["india squad west indies odi 2024"], question="upcoming India squad for the West Indies ODIs")

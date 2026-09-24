@@ -108,7 +108,7 @@ for f in demo*.py; do python "$f" >/dev/null 2>&1 && echo "ok   $f" || echo "FAI
 | `demo_pwa.py` | 34 | PWA, web push crypto, share target |
 | `demo_voice.py` | 33 | Voice mode; live Riva + NIM latency when keyed |
 | `demo_mail.py` | 24 | Attachments, new-mail alerts, free-time card |
-| `demo_search.py` | 65 | Web search, network guard, router, citations, sources, UI |
+| `demo_search.py` | 67 | Web search, network guard, router, citations, sources, UI |
 | `demo_cu_jev.py` | 16 | Jev in the browser (fake and real Jev) |
 
 ## Project layout
