@@ -1,18 +1,17 @@
-# OpenMuse — setup and run instructions
+# OpenMuse setup
 
-Full-platform guide for the completed 10-phase build. Everything runs on
-Python 3.10+ with the standard library plus `requirements.txt`; there is
-no build step and no framework.
+How to install, configure and run OpenMuse on your machine, turn on the
+optional features, and check that everything works.
 
-## 1. Prerequisites
+## 1. Requirements
 
-- Python 3.10+ (developed on 3.12)
-- `pip install -r requirements.txt` (`pyyaml`, `jsonschema`, `requests`)
-- Node.js (optional, only to re-run the client JS syntax check:
-  `node --check client/web/js/openmuse-api.js client/web/js/ui.js`)
-- A model provider API key for live (non-demo) runs — see §4.
-  Without one, every component still runs against the built-in scripted
-  mock provider, which is what the demo scripts use.
+- **Python 3.10 or newer.** It's developed on 3.14; nothing needs a newer feature than 3.10.
+- **An NVIDIA NIM API key** from [build.nvidia.com](https://build.nvidia.com). The
+  same key covers the chat model, embeddings and Riva speech.
+- **Chromium for Playwright** (`playwright install chromium`), used by the live
+  browser and by the UI tests.
+- **Optional:** Node.js, only to syntax-check the web app
+  (`node --check client/web/js/ui.js`).
 
 ## 2. Install
 
@@ -21,224 +20,157 @@ git clone https://github.com/0sparsh2/OpenMuse.git
 cd OpenMuse
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+playwright install chromium
+cp .env.example .env
 ```
 
-No other installation is needed. All state is file-backed under data
-directories you choose at startup (or `tempfile` in the demos); nothing
-writes outside the paths you pass in.
+Then open `.env` and set at least `NVIDIA_NIM_API_KEY` and `NVIDIA_MODEL`.
+`.env` is gitignored, so never commit it.
 
-## 3. Configuration
+## 3. Run
 
-| Area | How to configure |
+Two processes: the API (agent, tools, memory, browser) and the UI server
+(static web app plus a proxy to the API).
+
+```bash
+# terminal 1 — the API on http://127.0.0.1:8765
+python serve_nim.py
+
+# terminal 2 — the web app on http://127.0.0.1:8080
+python -m client.serve_ui --api http://127.0.0.1:8765 --port 8080 --data .data/ui
+```
+
+Open http://127.0.0.1:8080 and **create an account**. Memory, chats, saved
+logins, connected apps and files belong to that account.
+
+On first start, `serve_nim.py` creates an admin API key and appends it to `.env`
+as `OPENMUSE_API_KEY`. The key stays the same across restarts, and scripts can
+use it (`Authorization: Bearer omk_…`).
+
+Restart `serve_nim.py` after changing backend code or `.env`. UI changes only
+need a page reload. The service worker picks up new files on the next load.
+
+### Where data lives
+
+Everything is under `.data/` (gitignored):
+
+| Path | Contents |
 |---|---|
-| Model provider | `gateway/providers/openai_compat.py` reads `OPENAI_API_KEY`, `OPENAI_BASE_URL` (default `https://api.openai.com/v1`), `OPENAI_MODEL` (default `gpt-4o-mini`). It speaks the OpenAI-compatible chat API, so any compatible endpoint works. |
-| Policy | `policies/tool-capabilities.yaml` (per-tool risk classes R0–R5) and `policies/risk-catalog.yaml`. The classifier may raise risk, never lower it. |
-| Prompts | `prompts/` — layer prompts (main agent, subagent child, memory extractor/consolidator, scheduler, browser operator, connector operator, delivery critic, …). |
-| API keys (clients) | Created programmatically: `backend.keys.create_key(name=..., scopes={...}, tenant_id=...)`. Scopes: `sessions:write/read`, `runs:write/read`, `approvals:read/decide`, `artifacts:write/read`, `webhooks:write`, `admin`. |
-| Webhooks | `POST /v1/webhooks` with a target URL; deliveries are HMAC-signed (see `api/webhooks.py`). |
+| `.data/openmuse.db` | SQLite: chats, runs, events, approvals, notifications, logins, settings |
+| `.data/accounts/` | Accounts (scrypt password hashes) and session tokens |
+| `.data/users/<user>/` | Per-user memory, documents (Library), schedules |
+| `.data/browser-profile/` | Per-user browser profiles (cookies stay per user) |
+| `.data/vault.key`, `.data/vapid.json` | Encryption key for saved logins, web-push keys (both `0600`) |
+| `.data/serve_nim.out` | Server log, if you start it with `nohup … > .data/serve_nim.out` |
 
-Secrets discipline: raw credentials live only in the Secure Vault
-(`connectors/vault.py`; `MemoryVault` in-process, swap for a real KMS in
-production). The agent, the API, and the client only ever handle opaque
-`credential_ref`s and capture ids. Never put secrets in tool arguments,
-prompts, logs, or client state — `client/state.py::assert_no_secrets`
-and `tools/redaction.py` enforce this.
+To start completely fresh, stop both servers and delete `.data/`.
 
-## 4. Run each component
+## 4. Configuration (`.env`)
 
-### 4.1 Agent turn engine (Phase 1)
+Only the first three settings are required. [`.env.example`](../.env.example)
+lists every setting with comments.
 
-```python
-from agent.turn_engine import ...
-```
+### Model
 
-The engine is embedded by the API backend; to drive it directly see
-`demo.py` (14 checks: the full turn loop against the mock provider).
-
-### 4.2 External API server (Phase 7)
-
-```python
-from api import ApiBackend, serve
-
-backend = ApiBackend(workspace_root="/data/openmuse",
-                     respond=my_provider_respond)  # or omit -> mock
-server = serve(backend, host="127.0.0.1", port=8000)
-```
-
-- `GET /v1` → version; `GET /openapi.json` → full spec.
-- `POST /v1/sessions` → create a chat session.
-- `POST /v1/chats/{chat_id}/messages` with `Idempotency-Key` → starts a run.
-- `GET /v1/runs/{run_id}/events` → SSE (`run.status`, `assistant.delta`,
-  `approval.required`, `run.completed`); send `Last-Event-ID` (or
-  `?last_event_id=`) to resume without duplicates.
-- `GET /v1/approvals/{id}` → the approval card payload (tool, risk,
-  `argument_hash`, `presentation` bind fields).
-- `POST /v1/approvals/{id}/decision` with `{"decision": "approve"|"deny",
-  "argument_hash": "<exact hash>"}` → wrong hash is 409; approving a
-  parked run resumes it.
-- `POST /v1/runs/{run_id}/cancel` → cancel a parked/running run.
-- `POST /v1/artifacts` / `GET /v1/artifacts/{id}` → artifact upload/download.
-- `GET|POST /v1/webhooks`, `DELETE /v1/webhooks/{id}` → signed deliveries.
-
-To use a live model instead of the mock, pass a `respond` callable built
-on `gateway/providers/openai_compat.py` (or add a provider under
-`gateway/providers/` and register it in `gateway/router.py`).
-
-### 4.3 Reference web client (Phase 9)
-
-```bash
-# terminal 1 — API backend
-python3 - <<'EOF'
-from api import ApiBackend, serve
-backend = ApiBackend(workspace_root="/data/openmuse")
-rec, key = backend.keys.create_key(name="ui", scopes={"admin"},
-                                   tenant_id=backend.tenant_id)
-print("API_KEY=" + key)   # paste into the client's key box
-serve(backend, host="127.0.0.1", port=8000)
-import time; time.sleep(10**6)
-EOF
-
-# terminal 2 — client server (static UI + /v1 proxy + local surfaces)
-python3 -m client.serve_ui --api http://127.0.0.1:8000 --port 8080 \
-    --data /data/openmuse-ui
-# open http://127.0.0.1:8080, paste the API key in the sidebar box
-```
-
-What you get: main chat with streaming + tool-call cards + expandable run
-timeline, side chats, approval cards (destination/effect/bound hash;
-R4/R5 require WebAuthn device auth), Feed, Goals, Library/artifacts,
-Ideas, memory viewer/editor with forget controls, schedule/hook manager,
-connector catalog with Secure Vault capture flows, usage/privacy
-controls, and a voice surface (Web Speech API where available).
-
-Programmatic client (same contracts, for scripts/mobile):
-
-```python
-from client import OpenMuseClient
-c = OpenMuseClient("http://127.0.0.1:8000", api_key)
-s = c.create_session("hello")
-r = c.send_message(s["chat_id"], "summarize my day")
-for ev in c.stream_run(r.run_id,
-                       stop_when=lambda e: e.name == "run.completed"):
-    ...
-card = c.get_approval(approval_id)          # exact destination/effect/hash
-c.decide_approval(card, "approve", device_auth=...)  # device auth for R4/R5
-```
-
-Per-surface wrappers live in `client/services.py` (`ScheduleClient`,
-`MemoryClient`, `ConnectorClient`, `BrowserClient`, `UsageClient`) and
-`client/domains_client.py` (`GoalsClient`, `FeedClient`, `IdeasClient`).
-
-### 4.4 Scheduler & hooks (Phase 5)
-
-```python
-from scheduler.store import ScheduleStore
-from scheduler.service import ScheduleService
-svc = ScheduleService(ScheduleStore("/data/openmuse/schedules"))
-svc.create_schedule(name="brief", schedule="0 9 * * *",
-                    timezone="America/New_York", instructions="...")
-svc.create_hook(name="gh", provider="github", event_type="push",
-                instructions="...")
-# drive due schedules: svc.tick(now) -> job instances -> run via the agent
-```
-
-Delivery policy (notify / feed / quiet-hours) is enforced by
-`scheduler/delivery.py`. The client manages schedules/hooks from the
-Schedules tab.
-
-### 4.5 Connectors (Phase 6)
-
-```python
-from connectors.vault import MemoryVault
-from connectors.oauth import OAuthFlow
-from connectors.registry import ConnectorRegistry
-from connectors.github import GitHubConnector, mock_github_transport
-reg = ConnectorRegistry(vault=MemoryVault(), oauth=OAuthFlow())
-reg.register_connector(GitHubConnector(mock_github_transport()))
-```
-
-Reference connector: GitHub (OAuth PKCE + API-key via vault capture).
-OAuth: `reg.connect(..., auth_kind="oauth_pkce")` → `authorization_url`;
-user authorizes; `reg.complete_authorization(...)` finishes. API key:
-vault `create_capture` → user pastes the key on the Secure Vault capture
-page (`/vault/capture/{id}` on the UI server) → `reg.connect(...,
-auth_kind="api_key", capture_id=...)`. The model/client only ever sees
-connection ids and credential refs. Rate-limit hard stop: a 429/terminal
-limit halts the connector for the task — see `connectors/rest.py`.
-
-### 4.6 Browser computer use (Phase 4)
-
-`browser/operator.py` (`ManagedBrowserOperator`) — observation-grounded
-actions, challenge detection with user handoff (`mark_challenge_resolved`
-records the *user's* out-of-band resolution; the agent never solves
-challenges), commit barrier with approval-bound proposals, no-evasion
-enforcement. Wired as `browser.*` tools; surfaced in the client via
-`BrowserClient` handoff cards.
-
-### 4.7 Memory (Phase 2)
-
-```python
-from memory.layered import LayeredMemory
-mem = LayeredMemory("/data/openmuse/memory")
-mem.remember("My preferred dinner time is 7pm or later.")
-mem.recall("dinner time")
-mem.forget("dinner time")          # plan -> execute -> verify; tombstones
-```
-
-Journal (episodic), curated records (semantic, hybrid recall), people
-pages, and the forgetting pipeline with audit log. Manage from the
-client's Memory tab (viewer, source links, forget with plan preview).
-
-## 5. Verify
-
-Each phase has a self-contained demo (stdlib + mock provider, temp dirs):
-
-```bash
-python3 demo.py             # Phase 1: agent loop            (14 checks)
-python3 demo_memory.py      # Phase 2: layered memory       (35 checks)
-python3 demo_subagents.py   # Phase 3: subagents            (24 checks)
-python3 demo_browser.py      # Phase 4: browser              (31 checks)
-python3 demo_scheduler.py   # Phase 5: scheduler/hooks      (49 checks)
-python3 demo_connectors.py  # Phase 6: connectors           (54 checks)
-python3 demo_api.py         # Phase 7: external API          (36 checks)
-python3 demo_production.py  # Phase 8: production scale     (72 checks)
-python3 demo_client.py      # Phase 9: client UI            (102 checks)
-python3 demo_safety.py      # Phase 10: safety hardening    (43 checks)
-```
-
-Exit code 0 + `ALL CHECKS PASSED` = green. `demo_client.py` boots the
-real API and UI servers and exercises the whole client surface over HTTP;
-`demo_safety.py` additionally asserts the policy regression release gate
-fails loudly against a deliberately permissive policy.
-
-## 6. Deployment notes
-
-The blueprint's *Deployment blueprint* section is authoritative; the
-local equivalents of each tier in this repo:
-
-| Production tier | This repo (local) | Swap for production |
+| Setting | Default | What it does |
 |---|---|---|
-| API/control | `api/serve()` (stdlib HTTP) | ASGI server, stateless replicas |
-| Run queue | `production/queue.py` (file-backed) | Redis / durable queue |
-| Database | `production/runlog.py`, file stores | PostgreSQL (+ pgvector for `memory/vector_index.py`) |
-| Object store | `production/objects.py`, API artifacts | S3-compatible store; signed download URLs |
-| Workers | `production/workers.py` | autoscaled agent/tool worker pools |
-| Browser fleet | `browser/operator.py` (mock pages) | isolated Chromium pool, session affinity |
-| Vault | `connectors/vault.py` (`MemoryVault`) | KMS-backed vault; keep the capture-page flow |
-| Policy service | `policy/engine.py` (fail-closed) | independently deployed, low-latency |
-| Hook ingress | `scheduler/hooks.py` (`HookIngress`) | public minimal endpoint + signature verify |
+| `NVIDIA_NIM_API_KEY` | — (required) | NIM key for the model, embeddings and Riva speech |
+| `NVIDIA_MODEL` | — (required) | Main model, e.g. `nvidia/nemotron-3-super-120b-a12b` |
+| `NVIDIA_NIM_API_BASE` | `https://integrate.api.nvidia.com/v1` | OpenAI-compatible endpoint. Point it at a self-hosted NIM or any compatible server. |
+| `NVIDIA_FALLBACK_MODEL` | `openai/gpt-oss-20b` | Used after repeated 5xx/429 errors from the main model |
+| `NVIDIA_MEMORY_MODEL` | `NVIDIA_MODEL` | Background memory extraction, with thinking turned off |
+| `NVIDIA_VOICE_MODEL` | `NVIDIA_MODEL` | Voice turns (thinking off, tokens streamed) |
+| `NVIDIA_EMBED_MODEL` | `nvidia/nemotron-3-embed-1b` | Memory recall and search passage ranking |
 
-Operational runbooks (provider outage, unknown external-write outcome,
-browser compromise, memory poisoning, credential exposure) are in the
-blueprint's *Operational runbooks* section; the code hooks they assume
-(`UNKNOWN_OUTCOME` marking, forensic preservation, vault revocation)
-exist in `tools/`, `browser/`, `memory/`, and `connectors/`.
+### Optional features
 
-Production hardening checklist before any private beta: real provider
-keys with per-tenant quotas (`production/quotas.py`), signed approval
-deep links (`production/channels.py`), backup/restore exercises
-(`production/dr.py`), tenant deletion audits, TLS + envelope encryption,
-separate staging credentials, and the product/security acceptance
-criteria in the blueprint's final section (all demonstrated by
-`demo_production.py` + `demo_client.py` except the live-infrastructure
-items).
+| Feature | Settings | Without it |
+|---|---|---|
+| **Gmail and Google Calendar** | `COMPOSIO_API_KEY` from [composio.dev](https://composio.dev); `OPENMUSE_PUBLIC_URL` (where OAuth returns, default `http://127.0.0.1:8080`) | The Apps page shows the apps as unavailable |
+| **Jev decisions** | `JEV_API_KEY` from TypeSafe AI | Search ranks with embeddings, the router uses rules only, and the browser uses keyword checks only |
+| **Voice** | Nothing extra: Riva uses the NIM key. `OPENMUSE_ASR_MODEL` (`whisper` or `parakeet`), `OPENMUSE_TTS_VOICE`. To use other speech servers: `OPENMUSE_STT_BASE/KEY/MODEL`, `OPENMUSE_TTS_BASE/KEY/MODEL`. `OPENMUSE_VOICE=off` disables server speech. | The browser's own speech is used |
+| **Web push** | Nothing: VAPID keys are generated into `.data/vapid.json`. To pin them: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`. | — |
+| **Saved-login encryption key** | `OPENMUSE_VAULT_KEY` (a Fernet key) | Generated into `.data/vault.key` |
+
+### Behaviour
+
+| Setting | Default | What it does |
+|---|---|---|
+| `OPENMUSE_AUTONOMY` | `on` | `off` asks before every step. On, reversible local steps (reading, browsing, drafts) run on their own; purchases, sends, credential fills, shell and R3+ always ask. |
+| `OPENMUSE_HEADFUL` | off | `1` shows the automation browser window on this machine (you can always watch it in the UI) |
+| `OPENMUSE_API_PORT` | `8765` | API port |
+| `OPENMUSE_DATA` | `.data/api` | Shared workspace root |
+| `OPENMUSE_RECALL_MIN_COS` | `0.18` | Minimum similarity for memory recall |
+| `OPENMUSE_EMBEDDINGS` | `nim` | Set to anything else to use `OPENAI_API_KEY` embeddings, or the offline deterministic embedder when there's no key |
+| `OPENMUSE_DEBUG` | off | `1` prints every tool call the model makes |
+
+In the app, **Apps → Web search → "Search automatically"** controls automatic
+search per user. When it's off, OpenMuse searches only when you ask.
+
+## 5. Connecting apps (Gmail, Calendar)
+
+1. Put `COMPOSIO_API_KEY` in `.env` and restart `serve_nim.py`.
+2. In the app, open **Apps** and choose **Connect** on Gmail or Google Calendar.
+   Google's sign-in opens; approve, and you're sent back to OpenMuse.
+3. Reading happens automatically. Sending email and creating, changing or deleting
+   events always show an approval card first.
+4. Optional: tick **Tell me about new email** on the Gmail card for notifications
+   (the inbox is checked every 5 minutes).
+
+## 6. Using it on your phone
+
+The web app is an installable PWA. Browsers only allow service workers and push
+on HTTPS (or `localhost`), so expose the UI over HTTPS first, for example:
+
+```bash
+cloudflared tunnel --url http://localhost:8080
+```
+
+Open the HTTPS URL on your phone and install the app. On iPhone that's
+**Share → Add to Home Screen**; open it from the home screen before turning on
+notifications. Then choose **Bell → Get notifications on this device**. Set
+`OPENMUSE_PUBLIC_URL` to the HTTPS URL if you'll connect apps from the phone.
+
+## 7. Verify
+
+```bash
+for f in demo*.py; do python "$f" >/dev/null 2>&1 && echo "ok   $f" || echo "FAIL $f"; done
+```
+
+Each suite prints `N/N checks passed` and exits 0 (see the table in the
+[README](../README.md#tests)). Most run offline against scripted models in
+temporary folders; nothing touches `.data/`. Some also run live checks when keys
+are in `.env`:
+- `demo_voice.py`: real Riva and NIM, with a latency target under 2.5s. This check
+  depends on NVIDIA's hosted services and can miss on a slow day.
+- `demo_cu_jev.py`: the real Jev API.
+
+## 8. Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `FileNotFoundError: .env` on start | `cp .env.example .env` and fill in the NIM settings |
+| `provider 5xx` / `TRANSIENT; retrying` in the log | Hosted NIM hiccups. The app retries, then switches to `NVIDIA_FALLBACK_MODEL`. |
+| The UI says "Offline" | Is `serve_nim.py` running? Does `--api` point at its port? |
+| `401` in the UI | Sign in again, or use a fresh `OPENMUSE_API_KEY` in the key box |
+| The browser pauses with "human verification" | Open the live view and complete the check yourself (**Take control**); OpenMuse never solves these |
+| Web search returns nothing | DuckDuckGo rate-limits bursts; wait a minute. Unofficial endpoints can also change; update `ddgs`. |
+| Apps show "not connected" after OAuth | Check `OPENMUSE_PUBLIC_URL` matches the URL you're using |
+| No push notifications | Push needs HTTPS (or localhost), an installed app on iOS, and notification permission |
+| Voice is slow to start speaking | Hosted Riva latency varies; the first clause is spoken as soon as it's ready |
+
+## 9. Moving beyond one machine
+
+The code keeps each storage tier behind an interface, so production swaps are
+local changes:
+
+| Tier | Here | In production |
+|---|---|---|
+| API | stdlib HTTP server (`api/server.py`) | ASGI server behind TLS, stateless replicas |
+| Database | SQLite (`storage/db.py`) | PostgreSQL (plus pgvector for memory vectors) |
+| Queue and workers | in-process threads, `production/queue.py` | Redis or a durable queue with worker pools |
+| Browser | one local Chromium (`browser/live_operator.py`) | an isolated browser pool with session affinity |
+| Secrets | Fernet key file, Composio-held tokens | a KMS-backed vault |
+
+For the safety design (policy engine, approvals, taint, red-team gate), see
+[ARCHITECTURE.md](ARCHITECTURE.md#safety).
