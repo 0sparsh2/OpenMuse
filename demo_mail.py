@@ -214,6 +214,11 @@ def main() -> int:
         check("tapping a slot starts the booking message", val == "Book Thu Sep 24 · 5 PM–8 PM for ", val)
         page.click("#tabbar button[data-tab='connectors']")
         page.wait_for_selector("input[aria-label='Tell me about new email']", timeout=10000)
+        try:   # the saved setting loads asynchronously after the toggle is drawn
+            page.wait_for_function("(document.querySelector(\"input[aria-label='Tell me about new email']\") || {}).checked === true",
+                                   timeout=5000)
+        except Exception:
+            pass
         check("Apps shows the new-email toggle for connected Gmail, reflecting the setting",
               page.is_checked("input[aria-label='Tell me about new email']"))
         page.uncheck("input[aria-label='Tell me about new email']")
