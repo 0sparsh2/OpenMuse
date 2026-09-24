@@ -9,6 +9,7 @@ import json
 from urllib.parse import quote
 
 from search import netguard
+from search.engines import normalize_url
 from search.extract import extract
 from search.service import WebSearch
 from tools.registry import ToolDefinition, ToolRegistry
@@ -127,8 +128,20 @@ def register(registry: ToolRegistry) -> None:
                 for d, c, hi, lo, pr in zip(daily.get("time", []), daily.get("weather_code", []),
                                             daily.get("temperature_2m_max", []), daily.get("temperature_2m_min", []),
                                             daily.get("precipitation_probability_max", []))]
-        return {"found": True, "place": ", ".join(x for x in (p.get("name"), p.get("admin1"), p.get("country")) if x),
-                "timezone": w.get("timezone", ""), "unit": unit,
+        place = ", ".join(x for x in (p.get("name"), p.get("admin1"), p.get("country")) if x)
+        # the forecast is a citable source like any page, so "[n]" in the answer points somewhere real
+        svc = service()
+        run_state = svc._state(ctx.run_id)
+        url = f"https://open-meteo.com/en/docs#latitude={p['latitude']}&longitude={p['longitude']}"
+        n = svc._number(run_state, url, f"Open-Meteo forecast for {place}", (cur.get("time") or "")[:10])
+        summary = (f"{place} now: {cur.get('temperature_2m')}{unit}, {WMO.get(cur.get('weather_code'), '—')}. " +
+                   " ".join(f"{d['date']}: {d['summary']}, high {d['high']}{unit}, low {d['low']}{unit}, "
+                            f"{d['rain_chance']}% chance of rain." for d in days))
+        src = run_state["sources"][normalize_url(url)]
+        if summary not in src["passages"]:
+            src["passages"].append(summary)
+        return {"found": True, "n": n, "place": place, "note": f"Cite this forecast as [{n}].",
+                "source_url": url, "timezone": w.get("timezone", ""), "unit": unit,
                 "now": {"temp": cur.get("temperature_2m"), "feels_like": cur.get("apparent_temperature"),
                         "summary": WMO.get(cur.get("weather_code"), "—"), "humidity": cur.get("relative_humidity_2m"),
                         "wind": cur.get("wind_speed_10m"), "time": cur.get("time")},
@@ -146,7 +159,10 @@ def register(registry: ToolRegistry) -> None:
         capabilities=["network.fetch.public"], side_effect="none", idempotency="pure",
         default_timeout_ms=20_000, data_classes_accepted=["public"], execute=weather,
         display=lambda out: ({"type": "weather", "place": out["place"], "unit": out["unit"], "now": out["now"],
-                              "days": out["days"][:5]} if out.get("found") else None),
+                              "days": out["days"][:5],
+                              "source": {"n": out.get("n"), "title": f"Open-Meteo forecast for {out['place']}",
+                                         "url": out.get("source_url", "https://open-meteo.com"),
+                                         "site": "open-meteo.com", "date": ""}} if out.get("found") else None),
     ))
 
     # -- web.fetch (raw, kept for compatibility; now network-guarded) -----------------------

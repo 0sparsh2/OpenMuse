@@ -529,6 +529,9 @@ class ApiBackend:
         from tools.namespaces import web_tools
         svc = web_tools.SERVICE
         if svc is None or not svc.sources(run.run_id):
+            if "【" in (run.final_text or ""):   # 【…】 without any source to point at: drop it
+                from search.service import WebSearch
+                run.final_text = WebSearch.normalize_citations(run.final_text)
             return
         try:
             fixed, stats = svc.verify_citations(run.run_id, run.final_text)

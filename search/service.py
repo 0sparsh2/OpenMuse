@@ -275,11 +275,16 @@ class WebSearch:
     @staticmethod
     def normalize_citations(text: str) -> str:
         """【1†L1-L3】, 【1】, 【1, 2】, [1†source] -> [1] / [1, 2]; merges [1][2] -> [1, 2]."""
+        cite_body = re.compile(r"^\s*\d{1,3}(?:†[^,，]*)?(?:\s*[,，]\s*\d{1,3}(?:†[^,，]*)?)*\s*$")
+
         def norm(m):
-            ns = re.findall(r"(\d{1,3})(?:†[^,，\]】]*)?", m.group(1))
-            return "[" + ", ".join(dict.fromkeys(ns)) + "]" if ns else m.group(0)
+            if not cite_body.match(m.group(1)):
+                return m.group(0)          # not a list of source numbers: left for the cleanup below
+            ns = re.findall(r"(?:^|[,，])\s*(\d{1,3})", m.group(1))
+            return "[" + ", ".join(dict.fromkeys(ns)) + "]"
         text = re.sub(r"【([^】]{1,80})】", norm, text or "")
         text = re.sub(r"\[(\d{1,3}†[^\]]{0,60})\]", norm, text)
+        text = re.sub(r"\s?【[^】]{0,200}】", "", text)   # anything left in 【】 isn't a real source (e.g. a tool id)
         text = re.sub(r"\[(\d{1,3}(?:\s*,\s*\d{1,3})*)\](?:\s*\[(\d{1,3}(?:\s*,\s*\d{1,3})*)\])+",
                       lambda m: "[" + ", ".join(dict.fromkeys(re.findall(r"\d{1,3}", m.group(0)))) + "]", text)
         return text

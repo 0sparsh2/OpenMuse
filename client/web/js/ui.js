@@ -199,6 +199,7 @@
     const map = new Map();
     (m.blocks || []).forEach((b) => {
       if (b.display && b.display.type === "web_sources") (b.display.sources || []).forEach((src) => map.set(Number(src.n), src));
+      if (b.display && b.display.source && b.display.source.n) map.set(Number(b.display.source.n), b.display.source);
     });
     return map;
   }

@@ -194,6 +194,9 @@ def main() -> int:
     check("a made-up source number is removed", "[9]" not in fixed and ", 9" not in fixed and f"plan [{n_mer}]" in fixed, fixed)
     check("citation stats are recorded", stats["checked"] == 6 and stats["removed"] == 3, str(stats))
     norm = WebSearch.normalize_citations("No monthly fee【1†L1-L3】【2†L1-L4】. Pro is $299【1】. See [docs](https://x.io) [2][3].")
+    bogus = WebSearch.normalize_citations('High 29.4°C【{"id": "bbdba5b1-67e4"}】. Low 22°C【3†L2】.')
+    check("markers that aren't source numbers are removed (not misread as [5, 1])",
+          bogus == "High 29.4°C. Low 22°C[3].", bogus)
     check("ChatGPT-style markers (【1†L1-L3】) become [1]", norm ==
           "No monthly fee[1, 2]. Pro is $299[1]. See [docs](https://x.io) [2, 3].", norm)
     from api.voice import speakable
@@ -251,6 +254,8 @@ def main() -> int:
                 import re as _re
                 m = _re.search(r'"n":\s*(\d+)[^{}]*?"site":\s*"' + _re.escape(site), body)
                 nums[site.split(".")[0]] = m.group(1) if m else "0"
+            m = _re.search(r'"n":\s*(\d+)', body)
+            nums["wx"] = m.group(1) if m else "0"
         return ModelResponse(text=PLAN["answer"].format(**nums) if nums else PLAN["answer"], stop_reason="stop")
 
     backend = ApiBackend(workspace_root=os.path.join(tmp, "ws"), respond=respond, db_path=os.path.join(tmp, "db.sqlite"),
@@ -339,12 +344,15 @@ def main() -> int:
 
         web_tools.netguard.safe_get = fake_weather
         PLAN["calls"] = [("web.weather", {"location": "Pune"})]
-        PLAN["answer"] = "Light rain in Pune right now, about 27°C."
+        PLAN["answer"] = "Light rain in Pune right now, about 27.4°C [{wx}]."
         page.fill("textarea[aria-label='Message']", "will it rain in pune today?")
         page.keyboard.press("Enter")
         page.wait_for_selector(".mc-wx-now", timeout=20000)
         wx = page.inner_text(".mc-card")
         check("weather shows as a card with a forecast", "Pune, Maharashtra, India" in wx and "27°C" in wx and "80% rain" in wx, wx)
+        page.wait_for_function("document.querySelectorAll('a.cite').length > 2", timeout=10000)
+        wx_chip = page.eval_on_selector_all("a.cite", "els => els.map((e) => e.textContent)")[-1]
+        check("the forecast is cited like any other source", wx_chip == "open-meteo.com", wx_chip)
         web_tools.netguard.safe_get = real_safe_get
 
         page.click("#tabbar button[data-tab='connectors']")
