@@ -243,6 +243,13 @@ class ApiBackend:
             browser_operator.credential_resolver = self.logins.resolve
             browser_operator.credential_describer = self.logins.info
             self._register_logins_tool()
+        # Fast decisions in the live browser (Jev): page kind, "task done?", and a second
+        # opinion on committing clicks — only when a JEV_API_KEY is configured
+        if browser_operator is not None and hasattr(browser_operator, "decider"):
+            from search.jev import default_jev
+            if default_jev().api_key:
+                browser_operator.decider = default_jev()
+            browser_operator.goal_for = lambda sid: self._run_text.get(self._browser_runs.get(sid, ""), "")
         # Gmail extras (issue #8): attachments -> Library, opt-in new-mail alerts
         self.mailwatch = None
         if self.apps is not None and hasattr(self.apps, "execute_raw"):

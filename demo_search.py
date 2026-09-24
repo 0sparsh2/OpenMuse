@@ -219,6 +219,16 @@ def main() -> int:
     check("…including the high-stakes ones rules still catch", h2.search and h2.high_stakes and "professional" in router.note_for(h2))
     check("weather goes to the weather tool", "web.weather" in router.note_for(router.decide("weather in Pune?")))
     check("a shared link is read", "web.read" in router.note_for(router.decide("what does https://ex.com/a say?")))
+    hr = router.decide("research the best note-taking apps for students", jev=rj)
+    check("research requests get a deep, multi-angle search plan", hr.research and 'depth="research"' in router.note_for(hr))
+    check("…but editing text that mentions a report doesn't", not router.decide("rewrite this report on sales").search)
+
+    # a saved report keeps its citations meaningful
+    from api.library import _with_web_sources
+    web_tools.SERVICE = ws
+    rep = _with_web_sources("run_a", f"# Mercury costs\n\nThe base plan is free【{same['https://mercury.com/pricing']}†L1】.")
+    check("saving a report appends the cited sources with links",
+          "## Sources" in rep and "https://mercury.com/pricing" in rep and "†" not in rep and "nerdwallet" not in rep, rep)
 
     # -- 5. in the agent loop -----------------------------------------------------------------------
     tmp = tempfile.mkdtemp(prefix="openmuse-search-")

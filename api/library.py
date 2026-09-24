@@ -388,7 +388,10 @@ def register_tools(registry, library: Library) -> None:
     ))
 
     def create(ctx, a):
-        rec = library.create(uid(ctx), title=a["title"], fmt=a["format"], content=a.get("content", ""),
+        content = a.get("content", "")
+        if content and a["format"] in ("md", "pdf"):
+            content = _with_web_sources(getattr(ctx, "run_id", ""), content)
+        rec = library.create(uid(ctx), title=a["title"], fmt=a["format"], content=content,
                              columns=a.get("columns"), rows=a.get("rows"))
         return {"artifact_id": rec["artifact_id"], "name": rec["name"], "size": rec["size"]}
 
@@ -408,3 +411,25 @@ def register_tools(registry, library: Library) -> None:
         display=lambda out: {"type": "document", "title": out.get("name", "Document"),
                              "artifact_id": out.get("artifact_id"), "subtitle": "Created in your Library"},
     ))
+
+
+def _with_web_sources(run_id: str, content: str) -> str:
+    """A saved report keeps its [n] citations meaningful: normalise the markers and
+    append the cited web sources (from this run's searches) as a Sources list."""
+    try:
+        from tools.namespaces import web_tools
+        from search.service import WebSearch
+    except Exception:
+        return content
+    svc = web_tools.SERVICE
+    sources = svc.sources(run_id) if svc is not None and run_id else []
+    if not sources:
+        return content
+    content = WebSearch.normalize_citations(content)
+    cited = {int(n) for m in WebSearch.CITE.finditer(content) for n in re.findall(r"\d{1,3}", m.group(0))}
+    listed = [s for s in sources if s["n"] in cited]
+    if not listed or re.search(r"^#+\s*(sources|references)\b", content, re.I | re.M):
+        return content
+    lines = [f"[{s['n']}] {s.get('title') or s['url']} — {s['url']}" + (f" ({s['date']})" if s.get("date") else "")
+             for s in listed]
+    return content.rstrip() + "\n\n## Sources\n\n" + "\n".join(lines) + "\n"

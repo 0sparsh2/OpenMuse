@@ -39,6 +39,9 @@ URL = re.compile(r"https?://\S+")
 NO = re.compile(r"^\s*(write|draft|compose|rewrite|rephrase|translate|summari[sz]e (this|the|my)|proofread|"
                 r"fix (the )?grammar|make (it|this) (shorter|longer)|what('s| is) \d|calculate|convert \d|"
                 r"tell me a (joke|story)|(hi|hey|hello|thanks|thank you)\b)", re.I)
+RESEARCH = re.compile(r"\b(research|deep dive|in[- ]depth|comprehensive|thorough(ly)?|report on|write (me )?a report|"
+                      r"literature|compare (the )?(best|top|options|providers|tools|plans|\w+ vs)|pros and cons|"
+                      r"state of the art|landscape of|market for)\b", re.I)
 WEATHER = re.compile(r"\b(weather|forecast|temperature|rain(ing)?|snow(ing)?|umbrella|humid)\b", re.I)
 
 
@@ -49,6 +52,7 @@ class Hint:
     recency_days: int | None = None
     high_stakes: bool = False
     weather: bool = False
+    research: bool = False
     read_url: str = ""
     reason: str = ""
     by: str = "rules"
@@ -65,6 +69,9 @@ def rules(text: str) -> Hint | None:
     stakes = bool(HIGH_STAKES.search(t))
     if WEATHER.search(t) and not stakes:
         return Hint(search=True, weather=True, recency_days=1, reason="weather")
+    if RESEARCH.search(t) and not re.match(r"^\s*(rewrite|proofread|translate|summari[sz]e (this|the|my))", t, re.I):
+        return Hint(search=True, research=True, high_stakes=stakes, recency_days=_recency(t),
+                    reason="a research request")
     if NO.search(t) and not stakes and not EXPLICIT.search(t):
         return Hint(reason="writing, maths or small talk")
     if EXPLICIT.search(t):
@@ -117,6 +124,12 @@ def note_for(h: Hint) -> str:
     if h.weather:
         return "[Runtime note — trusted] Weather question: use web.weather (not web.search) for the place asked about."
     rec = f" with recency_days≈{h.recency_days}" if h.recency_days else ""
+    if h.research:
+        return ("[Runtime note — trusted] This is a research request. Plan 3-5 angles, run web.search with "
+                f"depth=\"research\"{rec} for each (search again where results are thin or sources disagree), "
+                "cross-check key facts across sources, then write a structured answer with [n] citations. "
+                "If the user wants a report or it's long, save it with docs.create (md or pdf); cited sources "
+                "are listed at the end automatically.")
     if h.high_stakes:
         return ("[Runtime note — trusted] This is a health, legal or money question. Check current, authoritative "
                 f"sources with web.search{rec} before answering, cite them as [n], and say where people should "

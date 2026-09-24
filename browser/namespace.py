@@ -61,6 +61,8 @@ OBSERVATION_SCHEMA = {
         "forms": {"type": "array"}, "challenges": {"type": "array"},
         "session_state": {"type": "string"}, "cart": {"type": "array"},
         "captured_at": {"type": "string"},
+        # fast decisions (Jev), when configured: page kind, confidence, task_done
+        "page": {"type": "object"}, "hints": {"type": "array"},
     },
 }
 

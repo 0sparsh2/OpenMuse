@@ -110,6 +110,9 @@ class _Session:
         self.gen = 0
         self.state = "active"          # active | challenged | closed
         self.challenge = ""
+        self.insight_key = ""           # (url, title) the page check last ran on
+        self.insight: dict = {}         # {"kind", "confidence", "task_done", "hints"}
+        self.recent: list[str] = []     # recent action signatures, for loop detection
         self.frame: bytes = b""
         self.frame_hash = ""
         self.frame_seq = 0
@@ -139,6 +142,12 @@ class LiveBrowserOperator(BrowserOperator):
         # (browser/logins.py), and receive finished downloads (user, name, bytes)
         # -> artifact id (the Library). Both optional.
         self.credential_resolver = None
+        # Optional fast decision model (Jev): page type, "is the task done?", and a
+        # second opinion on whether a click commits to something. It can only add
+        # caution — the keyword checks stay as the floor. goal_for(session_id) gives
+        # the user's request for the done-check.
+        self.decider = None
+        self.goal_for = None
         self.credential_describer = None   # (user, ref) -> {"site","username","field"} (no secret)
         self.download_sink = None
         self.headless = headless
@@ -270,6 +279,102 @@ class LiveBrowserOperator(BrowserOperator):
             session_state=s.state,
             captured_at=_utcnow(),
         )
+
+    # -- fast decisions (Jev) -----------------------------------------------------------
+    PAGE_KINDS = {
+        "content": "A normal page with content: an article, product, place or information",
+        "results": "A list of search results or listings to choose from",
+        "form": "A form to fill in (details, filters, dates)",
+        "login": "A sign-in or sign-up wall that blocks the content",
+        "cookie_consent": "A cookie or privacy consent banner or dialog covering the page",
+        "bot_check": "A CAPTCHA or 'are you human' verification",
+        "error": "An error, 'not found', or access-denied page",
+        "checkout": "A checkout, payment or booking-confirmation step",
+    }
+    HINTS = {
+        "login": "This page needs signing in: use a saved login (browser.logins) or ask the user to sign in from the live view.",
+        "cookie_consent": "A cookie banner is covering the page: dismiss it first (prefer 'Reject all' or 'Necessary only').",
+        "error": "This looks like an error page: go back or try a different result.",
+        "checkout": "This is a checkout/confirmation step: anything that pays or books needs the user's approval.",
+    }
+
+    def _insights(self, s: _Session, raw: dict, action: dict, out: dict | None = None) -> tuple[dict, list[str]]:
+        hints: list[str] = []
+        # loop detection (rules): the same action on the same page, again and again.
+        # Element ids change every observation, so compare what was acted on.
+        out = out or {}
+        target = (out.get("clicked") or out.get("typed_into") or out.get("selected") or action.get("url")
+                  or action.get("direction") or (action.get("text") or "")[:40])
+        sig = f"{s.page.url}|{action.get('kind')}|{target}"
+        s.recent = (s.recent + [sig])[-8:]
+        if s.recent.count(sig) >= 3:
+            hints.append("You've done this same action here 3 times without progress: try a different approach, "
+                         "or tell the user what's blocking you.")
+            self._log(s, "Stuck? Same step repeated", kind="hint")
+        if self.decider is None or not getattr(self.decider, "available", False):
+            return {}, hints
+        key = f"{s.page.url}|{raw.get('title', '')}"
+        if key != s.insight_key:
+            goal = ""
+            if self.goal_for is not None:
+                try:
+                    goal = (self.goal_for(s.session_id) or "")[:600]
+                except Exception:
+                    goal = ""
+            state = {"url": s.page.url, "title": raw.get("title", ""),
+                     "page_text": (raw.get("text", "") or "")[:2500],
+                     "controls": "\n".join((raw.get("elements") or [])[:40])}
+            questions = {"kind": {"type": "choice", "instructions": "What kind of page is this right now?",
+                                  "criteria": self.PAGE_KINDS}}
+            if goal:
+                state["user_request"] = goal
+                questions["done"] = {"type": "noul", "instructions":
+                                     "This page already shows what the user asked for (the request is fulfilled "
+                                     "or the requested information is visible)"}
+            ans = self.decider.decide(state, questions, timeout=2.0)
+            s.insight_key = key
+            s.insight = {}
+            if ans and "kind" in ans:
+                kind = ans["kind"].get("choice", "")
+                conf = float((ans["kind"].get("probabilities") or {}).get(kind, 0.0))
+                s.insight = {"kind": kind, "confidence": round(conf, 2)}
+                if "done" in ans:
+                    s.insight["task_done"] = round(float(ans["done"].get("noul", 0.0)), 2)
+                # a human check the keyword scan missed: pause for the user (caution only)
+                if kind == "bot_check" and conf >= 0.85 and s.state != "challenged":
+                    s.state, s.challenge = "challenged", "captcha"
+                    self._log(s, "Paused — looks like a human check", kind="challenge")
+        info = dict(s.insight)
+        kind = info.get("kind", "")
+        if kind in self.HINTS and info.get("confidence", 0) >= 0.6:
+            hints.append(self.HINTS[kind])
+        if info.get("task_done", 0) >= 0.8:
+            hints.append("This page looks like it already answers the user's request: confirm what you see and "
+                         "report back instead of clicking further.")
+        return info, hints
+
+    def _looks_committing(self, s: _Session, loc, label: str) -> bool:
+        """Second opinion for buttons the keyword check didn't flag ("Confirm", "Continue"
+        on a payment page, "Send"). Only ever adds an approval, never removes one."""
+        if self.decider is None or not getattr(self.decider, "available", False):
+            return False
+        try:
+            meta = loc.evaluate("e => [e.tagName, e.getAttribute('type') || '', e.getAttribute('role') || '']")
+        except Exception:
+            return False
+        tag, typ, role = (meta + ["", "", ""])[:3]
+        is_button = tag in ("BUTTON",) or role == "button" or (tag == "INPUT" and typ in ("submit", "button"))
+        if not is_button and s.insight.get("kind") not in ("checkout", "form"):
+            return False
+        try:
+            text = s.page.evaluate("() => (document.body && document.body.innerText || '').slice(0, 2000)")
+        except Exception:
+            text = ""
+        p = self.decider.noul({"page": f"{s.title} — {s.page.url}", "page_kind": s.insight.get("kind", "unknown"),
+                               "button": label or "(no label)", "page_text": text},
+                              "Clicking this button will place an order, make a payment, confirm a booking or "
+                              "reservation, or send or publish something to other people", timeout=2.0)
+        return p is not None and p >= 0.75
 
     def _element(self, s: _Session, element_id: str):
         m = re.fullmatch(r"el_(\d+)_(\d+)", element_id or "")
@@ -511,7 +616,7 @@ class LiveBrowserOperator(BrowserOperator):
         elif kind == "click":
             loc = self._element(s, action.get("element_id", ""))
             label = _label_of(loc)
-            if COMMIT_RE.search(label):
+            if COMMIT_RE.search(label) or self._looks_committing(s, loc, label):
                 s.pending_commit = CommitProposal(
                     proposal_id="cp_" + uuid.uuid4().hex[:10],
                     origin=_origin(page.url), effect="purchase",
@@ -657,6 +762,7 @@ class LiveBrowserOperator(BrowserOperator):
 
         raw = self._observe(s)
         obs = self._obs_from_raw(s, raw)
+        page_info, hints = self._insights(s, raw, action, out)
         out["observation"] = {
             "session_id": session_id, "url": obs.url, "title": obs.title,
             "origin": obs.origin, "navigation_id": obs.navigation_id,
@@ -666,6 +772,10 @@ class LiveBrowserOperator(BrowserOperator):
             "session_state": obs.session_state, "cart": [],
             "captured_at": obs.captured_at,
         }
+        if page_info:
+            out["observation"]["page"] = page_info
+        if hints:
+            out["observation"]["hints"] = hints
         if s.state == "challenged":
             out["status"] = "challenge_paused"
             out["handoff_to_user"] = {"challenge": s.challenge,
