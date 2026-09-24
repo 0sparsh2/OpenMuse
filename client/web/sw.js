@@ -1,8 +1,9 @@
 /* OpenMuse service worker (issue #17): app shell cache, share target, web push.
    API responses (/v1/*) are never cached — user data stays on the server. */
-const VERSION = "om-shell-v6";
+const VERSION = "om-shell-v8";
 const SHELL = ["/", "/css/tokens.css", "/css/app.css", "/css/chat.css", "/js/openmuse-api.js", "/js/ui.js",
-               "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/badge-96.png"];
+               "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/badge-96.png",
+               "/img/avatar.webp"];
 const SHARE_CACHE = "om-share";
 
 self.addEventListener("install", (e) => {
@@ -51,7 +52,7 @@ self.addEventListener("fetch", (e) => {
     }).catch(() => caches.match("/")));
     return;
   }
-  if (SHELL.includes(url.pathname) || url.pathname.startsWith("/icons/")) {
+  if (SHELL.includes(url.pathname) || url.pathname.startsWith("/icons/") || url.pathname.startsWith("/img/")) {
     // network first, so an update shows on the very next load; the cache keeps it working offline
     e.respondWith(caches.open(VERSION).then(async (c) => {
       try {

@@ -110,7 +110,7 @@ for f in demo*.py; do python "$f" >/dev/null 2>&1 && echo "ok   $f" || echo "FAI
 | `demo_mail.py` | 24 | Attachments, new-mail alerts, free-time card |
 | `demo_search.py` | 68 | Web search, network guard, router, citations, sources, UI |
 | `demo_cu_jev.py` | 16 | Jev in the browser (fake and real Jev) |
-| `demo_stream.py` | 12 | Streaming answers: chunking, streamed tool calls, retries (dropped stream, error inside a stream, all-thinking reply), the growing bubble |
+| `demo_stream.py` | 14 | Streaming answers: chunking, streamed tool calls, retries (dropped stream, error inside a stream, all-thinking reply), the growing bubble |
 
 ## Project layout
 

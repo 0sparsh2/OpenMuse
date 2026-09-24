@@ -632,7 +632,8 @@ class ApiBackend:
             streaming.register(run.run_id, streaming.PartialText(
                 lambda text, step, rid=run.run_id: self.eventbus.publish(
                     rid, "assistant.partial", {"reset": True, "step": step} if text is None
-                    else {"text": text, "step": step})))
+                    else {"text": text, "step": step}),
+                cancelled=lambda r=run: r.cancel_requested))
             self._run_text[run.run_id] = " ".join(
                 b.text for b in msg.blocks if b.kind == "text")[:4000]
             session = self.sessions.get(chat_id)

@@ -274,6 +274,9 @@ class OpenAICompatProvider(Provider):
                     obj = json.loads(chunk)
                 except json.JSONDecodeError:
                     continue
+                if getattr(sink, "cancelled", None) is not None and sink.cancelled():
+                    resp.close()   # Stop pressed: end the answer now, not when the model finishes
+                    raise ProviderError("CANCELLED", "stopped by the user", retryable=False)
                 if obj.get("error"):
                     # hosted NIM can report a failure inside a 200 stream: retry it, don't return nothing
                     err = obj["error"] if isinstance(obj["error"], dict) else {"message": str(obj["error"])}

@@ -35,6 +35,8 @@ class Resilient:
                     return resp
                 except ProviderError as exc:
                     last = exc
+                    if exc.code == "CANCELLED":
+                        raise           # the user stopped it: no retry, no fallback model
                     if not exc.retryable:
                         break  # auth/invalid request: the same model won't do better
                     wait = min(2 ** attempt, 8)

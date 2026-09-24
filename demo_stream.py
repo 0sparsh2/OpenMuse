@@ -89,7 +89,7 @@ class FakeNim(http.server.BaseHTTPRequestHandler):
                     self.close_connection = True
                     return
                 chunk({"content": w + (" " if i < len(words) - 1 else "")})
-                time.sleep(0.06)
+                time.sleep(0.3 if "again?" in json.dumps(body["messages"][-2:]) else 0.06)   # slow one for the Stop test
             chunk({}, "stop")
         send("[DONE]")
         self.wfile.write(b"0\r\n\r\n")
@@ -199,6 +199,27 @@ def main() -> int:
         page.wait_for_selector(".mc-bubble.bot:not(.streaming)", timeout=20000)
         page.wait_for_function("!document.querySelector('.mc-bubble.streaming')", timeout=20000)
         check("when it's done, the finished answer replaces the live text", page.inner_text(".mc-bubble.bot").strip() == ANSWER)
+
+        # typing the next request and pressing Enter mid-task must not cancel the task
+        page.fill("textarea[aria-label='Message']", "who is in india's odi squad, again?")
+        page.keyboard.press("Enter")
+        page.wait_for_selector(".mc-send.stop", timeout=10000)
+        runs_before = len(backend.runs._runs)
+        page.fill("textarea[aria-label='Message']", "and the T20 squad?")
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(400)
+        running = [r for r in backend.runs._runs.values() if r.state not in ("COMPLETED", "FAILED", "CANCELLED")]
+        check("Enter during a task keeps the task running and keeps what you typed",
+              running and len(backend.runs._runs) == runs_before
+              and page.input_value("textarea[aria-label='Message']") == "and the T20 squad?")
+        page.click(".mc-send.stop")
+        for _ in range(30):
+            time.sleep(0.5)
+            r = [x for x in backend.runs._runs.values() if "again?" in backend._run_text.get(x.run_id, "")]
+            if r and r[-1].state in ("COMPLETED", "FAILED", "CANCELLED"):
+                break
+        page.wait_for_function("!document.querySelector('.mc-send.stop')", timeout=15000)
+        check("…while the Stop button still stops it", any(r.state == "CANCELLED" for r in backend.runs._runs.values()))
         browser.close()
     nim.shutdown()
 

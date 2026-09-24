@@ -34,6 +34,8 @@ MIME = {
     ".svg": "image/svg+xml",
     ".png": "image/png",
     ".webmanifest": "application/manifest+json",
+    ".webp": "image/webp",
+    ".jpg": "image/jpeg",
 }
 
 
@@ -191,7 +193,7 @@ class UiHandler(BaseHTTPRequestHandler):
                 return self._serve_static("index.html", extra={"Cache-Control": "no-cache"})
             if path.startswith("/css/") or path.startswith("/js/"):
                 return self._serve_static(path.lstrip("/"), extra={"Cache-Control": "no-cache"})
-            if path.startswith("/icons/"):
+            if path.startswith("/icons/") or path.startswith("/img/"):
                 return self._serve_static(path.lstrip("/"))
             if path in ("/manifest.webmanifest", "/sw.js"):
                 # the worker must always be re-fetched so app updates land

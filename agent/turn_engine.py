@@ -142,7 +142,15 @@ def advance_run(run: Run, deps: Deps, log: EventLog) -> Run:
                     idempotency_key=f"{run.run_id}:{run.step}:model",
                 )
             except ProviderError as exc:
+                if run.cancel_requested:           # Stop pressed mid-answer
+                    log.append("run.cancelled", {})
+                    _transition(run, log, CANCELLED)
+                    return run
                 return _fail(run, log, f"PROVIDER_{exc.code}", str(exc))
+            if run.cancel_requested:               # Stop pressed while the model was answering
+                log.append("run.cancelled", {})
+                _transition(run, log, CANCELLED)
+                return run
             log.append("model.response", {
                 "tool_calls": [{"name": tc.name, "id": tc.id} for tc in response.tool_calls],
                 "stop_reason": response.stop_reason,

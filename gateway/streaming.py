@@ -36,10 +36,12 @@ class PartialText:
     """Coalesces streamed tokens into chunks (~every 60 chars, 120 ms, or a line
     break) and hands them to `emit(text, step)`; `emit(None, step)` = reset."""
 
-    def __init__(self, emit, *, min_chars: int = 60, max_wait: float = 0.12):
+    def __init__(self, emit, *, min_chars: int = 60, max_wait: float = 0.12, cancelled=None):
         import time as _t
         self._t = _t
         self.emit = emit
+        if cancelled is not None:
+            self.cancelled = cancelled   # providers poll this and end the stream on Stop
         self.min_chars, self.max_wait = min_chars, max_wait
         self.buf, self.step, self.last = "", None, 0.0
         self.lock = threading.Lock()

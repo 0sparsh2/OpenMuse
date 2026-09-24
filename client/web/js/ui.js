@@ -121,20 +121,8 @@
   // Conversation-first surface: avatar header with live status, bubbles,
   // live tool cards (the browser card streams real frames), inline approvals,
   // and a pill composer. Transcripts persist per browser (no secrets in them).
-  const AVATAR_SVG =
-    '<svg viewBox="0 0 64 64" aria-hidden="true">' +
-    '<defs><radialGradient id="omAvG" cx="40%" cy="32%" r="75%">' +
-    '<stop offset="0" stop-color="#ffe7d6"/><stop offset=".65" stop-color="#f5c3a5"/>' +
-    '<stop offset="1" stop-color="#e2a07f"/></radialGradient></defs>' +
-    '<circle cx="32" cy="32" r="32" fill="#eef1f6"/>' +
-    '<path d="M16 60c1-10 7-15 16-15s15 5 16 15z" fill="#c9d6ea"/>' +
-    '<ellipse cx="32" cy="29" rx="15" ry="17" fill="url(#omAvG)"/>' +
-    '<ellipse cx="26.5" cy="30" rx="1.9" ry="2.4" fill="#3b2a24"/>' +
-    '<ellipse cx="37.5" cy="30" rx="1.9" ry="2.4" fill="#3b2a24"/>' +
-    '<ellipse cx="23" cy="35" rx="3" ry="1.8" fill="#f29a8a" opacity=".45"/>' +
-    '<ellipse cx="41" cy="35" rx="3" ry="1.8" fill="#f29a8a" opacity=".45"/>' +
-    '<path d="M28.5 37.5q3.5 2.6 7 0" stroke="#3b2a24" stroke-width="1.6" fill="none" stroke-linecap="round"/>' +
-    '</svg>';
+  // OpenMuse's face: the felt mushroom character (client/web/img/avatar.webp)
+  const AVATAR_IMG = '<img src="img/avatar.webp?v=1" alt="" draggable="false">';
   const GLOBE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.8 3 2.8 15 0 18M12 3c-2.8 3-2.8 15 0 18"/></svg>';
   const GEAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>';
   const LOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>';
@@ -356,7 +344,7 @@
     // header: avatar, name, one-line live status, and the "Computer" pill
     const header = el("header", { class: "mc-header" });
     const persona = el("div", { class: "mc-persona" });
-    persona.innerHTML = '<div class="mc-avatar">' + AVATAR_SVG + "</div>";
+    persona.innerHTML = '<div class="mc-avatar">' + AVATAR_IMG + "</div>";
     const pname = el("div", { class: "mc-name" });
     pname.innerHTML = '<div class="mc-name-t">OpenMuse</div><div class="mc-status" aria-live="polite"></div>';
     persona.appendChild(pname);
@@ -579,7 +567,7 @@
       latest.hidden = true;   // re-evaluated on the next scroll
       if (!chat || !chat.messages.length) {
         const empty = el("div", { class: "mc-empty" });
-        empty.innerHTML = '<div class="mc-avatar big">' + AVATAR_SVG + "</div><h2>What can I do for you?</h2>" +
+        empty.innerHTML = '<div class="mc-avatar big">' + AVATAR_IMG + "</div><h2>What can I do for you?</h2>" +
           "<p>I can browse the web live — you can watch every step and take over anytime.</p>";
         const sugg = el("div", { class: "mc-suggest" });
         ["Find the cheapest nonstop SFO → JFK flight on Dec 14, back on the 20th. Use a browser.",
@@ -965,7 +953,7 @@
       top.innerHTML = '<div class="mc-tool-ic globe">' + GLOBE + "</div>";
       const txt = el("div", { class: "mc-tool-txt" });
       const t = el("div", { class: "mc-tool-t", text: "Browser" });
-      t.appendChild(el("span", { class: "mc-beta", text: "Live" }));
+      if (blk.state !== "closed") t.appendChild(el("span", { class: "mc-beta", text: "Live" }));   // only while the session is open
       const s = el("div", { class: "mc-tool-s" + (m.running && blk.state !== "closed" ? " shimmer" : ""), text: blk.status || "Working" });
       txt.appendChild(t); txt.appendChild(s);
       top.appendChild(txt);
@@ -1409,7 +1397,13 @@
 
     async function onSend(e) {
       e.preventDefault();
-      if (activeRun) {  // stop button
+      if (activeRun) {
+        // Only the Stop button stops a task. Enter with a new message must never cancel
+        // what's running (e.g. a task waiting for your approval) or drop what you typed.
+        if (e.submitter !== send) {   // Enter (or any submit that isn't the Stop button)
+          if (input.value.trim()) toast("OpenMuse is still working on your last request. Press Stop to cancel it, or wait a moment.");
+          return;
+        }
         try { await API.cancelRun(activeRun.runId); } catch (err) { toast("Stop failed: " + err.message); }
         return;
       }
@@ -1724,7 +1718,7 @@
     let mode = "signin";
     box.innerHTML = "";
     const card = el("div", { class: "auth-card", role: "dialog", "aria-modal": "true", "aria-labelledby": "authTitle" });
-    card.innerHTML = '<div class="mc-avatar big">' + AVATAR_SVG + '</div><h1 id="authTitle"></h1><p class="auth-sub"></p>';
+    card.innerHTML = '<div class="mc-avatar big">' + AVATAR_IMG + '</div><h1 id="authTitle"></h1><p class="auth-sub"></p>';
     const tabs = el("div", { class: "auth-tabs", role: "tablist" });
     const tIn = el("button", { type: "button", role: "tab", text: "Sign in" });
     const tUp = el("button", { type: "button", role: "tab", text: "Create account" });

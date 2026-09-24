@@ -1,0 +1,41 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  suites:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      # Every suite runs offline against scripted models; live checks (NVIDIA
+      # Riva/NIM, Jev) switch themselves off when no keys are configured.
+      - name: Run test suites
+        run: |
+          failed=""
+          for f in demo*.py; do
+            echo "::group::$f"
+            if python "$f"; then echo "ok $f"; else failed="$failed $f"; fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then echo "Failed:$failed"; exit 1; fi
+
+      - name: Check the web app's JavaScript
+        run: |
+          node --check client/web/js/ui.js
+          node --check client/web/js/openmuse-api.js
+          node --check client/web/sw.js
