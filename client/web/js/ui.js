@@ -392,7 +392,8 @@
     latest.addEventListener("click", () => scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" }));
     root.appendChild(latest);
     scroller.addEventListener("scroll", () => {
-      latest.hidden = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 200;
+      latest.hidden = !!thread.querySelector(".mc-empty") ||   // nothing to jump to on the start screen
+        scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 200;
     });
 
     const form = el("form", { class: "mc-composer" });
@@ -575,6 +576,7 @@
       thread.classList.toggle("redraw", !!(activeRun && chat && thread.dataset.chat === chat.chatId && thread.childElementCount));
       thread.dataset.chat = chat ? chat.chatId : "";
       thread.innerHTML = "";
+      latest.hidden = true;   // re-evaluated on the next scroll
       if (!chat || !chat.messages.length) {
         const empty = el("div", { class: "mc-empty" });
         empty.innerHTML = '<div class="mc-avatar big">' + AVATAR_SVG + "</div><h2>What can I do for you?</h2>" +

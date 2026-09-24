@@ -718,3 +718,13 @@ a.cite:hover, a.cite:focus-visible { background: var(--mc-accent); color: #fff; 
 @media (prefers-reduced-motion: reduce) { .mc-bubble.streaming > :last-child::after { animation: none; } }
 .mc-thread.redraw .mc-bubble, .mc-thread.redraw .mc-card, .mc-thread.redraw .mc-plan,
 .mc-thread.redraw .mc-row > * { animation: none; }
+
+/* the drawer keeps its own column layout at every width (the old sidebar's
+   mobile rule turned it into a squashed horizontal strip) */
+.sidebar.drawer { flex-direction: column; align-items: stretch; overflow-x: hidden; overflow-y: auto;
+  height: 100dvh; padding: calc(18px + env(safe-area-inset-top)) 14px calc(18px + env(safe-area-inset-bottom)); gap: 14px; }
+.drawer .nav { flex-direction: column; }
+.drawer .nav-label { display: block; }
+.drawer .conn-status { display: flex; }
+.drawer .brand, .drawer .drawer-new, .drawer .drawer-search { flex: none; }
+@media (max-width: 480px) { .sidebar.drawer { width: 86vw; } }

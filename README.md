@@ -105,7 +105,7 @@ for f in demo*.py; do python "$f" >/dev/null 2>&1 && echo "ok   $f" || echo "FAI
 | `demo_proactive.py` | 23 | Goals, ideas, feed |
 | `demo_parallel.py` | 10 | Parallel helpers |
 | `demo_logins.py` | 15 | Saved-login vault, downloads |
-| `demo_pwa.py` | 34 | PWA, web push crypto, share target |
+| `demo_pwa.py` | 36 | PWA, web push crypto, share target, phone layout |
 | `demo_voice.py` | 33 | Voice mode; live Riva + NIM latency when keyed |
 | `demo_mail.py` | 24 | Attachments, new-mail alerts, free-time card |
 | `demo_search.py` | 68 | Web search, network guard, router, citations, sources, UI |

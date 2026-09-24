@@ -303,6 +303,16 @@ def main() -> int:
         check("phone: no sideways scrolling at 390px", lay["sw"] <= 390, str(lay["sw"]))
         check("phone: tap targets at least 44px", all(h >= 44 for h in lay["tabs"]) and all(min(t) >= 44 for t in lay["top"]), str(lay))
         check("phone: content extends under the notch (safe areas handled)", "viewport-fit=cover" in lay["vp"])
+        pp.click("#menuBtn")
+        pp.wait_for_timeout(400)
+        dr = pp.evaluate("""() => { const d = document.querySelector('#drawer'), n = d.querySelector('.nav');
+            return { dir: getComputedStyle(d).flexDirection, nav: getComputedStyle(n).flexDirection,
+                     side: d.scrollWidth > d.clientWidth + 1,
+                     full: document.querySelector('#drawerNew').getBoundingClientRect().width > d.clientWidth * 0.8 } }""")
+        check("phone: the menu stays a column (it used to collapse into a squashed strip)",
+              dr["dir"] == "column" and dr["nav"] == "column" and not dr["side"] and dr["full"], str(dr))
+        pp.keyboard.press("Escape")
+        check("phone: no 'Latest messages' button over the start screen", not pp.is_visible(".mc-latest"))
         phone.close()
         browser.close()
 

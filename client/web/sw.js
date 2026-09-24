@@ -1,6 +1,6 @@
 /* OpenMuse service worker (issue #17): app shell cache, share target, web push.
    API responses (/v1/*) are never cached — user data stays on the server. */
-const VERSION = "om-shell-v5";
+const VERSION = "om-shell-v6";
 const SHELL = ["/", "/css/tokens.css", "/css/app.css", "/css/chat.css", "/js/openmuse-api.js", "/js/ui.js",
                "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/badge-96.png"];
 const SHARE_CACHE = "om-share";
