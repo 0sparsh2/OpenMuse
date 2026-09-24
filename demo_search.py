@@ -200,6 +200,17 @@ def main() -> int:
     check("ChatGPT-style markers (【1†L1-L3】) become [1]", norm ==
           "No monthly fee[1, 2]. Pro is $299[1]. See [docs](https://x.io) [2, 3].", norm)
     from api.voice import speakable
+    body, listed = WebSearch.split_sources_line("India's squad:\n\n- Shubman Gill (Captain)\n- Rohit Sharma\n\nSources: [1], [2], [3], [4].")
+    check("a model-written 'Sources: [1], [2]…' line is taken out (the app lists sources)",
+          body == "India's squad:\n\n- Shubman Gill (Captain)\n- Rohit Sharma" and listed == {1, 2, 3, 4}, repr(body))
+    check("…including bold variants, but not sentences that mention sources",
+          WebSearch.split_sources_line("**Sources:** [1, 2] and [5]") == ("", {1, 2, 5})
+          and WebSearch.split_sources_line("The sources say it's sunny [1].")[1] == set())
+    check("removed markers never leave ',,,' or an empty 'Sources:' line",
+          WebSearch.tidy("Kabaddi 49-24 , , .\n\nSources:,,,.") == "Kabaddi 49-24.")
+    stale = ws.search("run_y", ["india squad west indies odi 2024"], question="upcoming India squad for the West Indies ODIs")
+    check("a past year in a query about something upcoming gets a 'today is …' warning", "today is" in stale["note"]
+          and "2024" in stale["note"], stale["note"])
     check("markers are never read aloud", speakable("No fee【1†L1-L3】 and wires are free [2, 3].") ==
           "No fee and wires are free.")
     from gateway.providers.openai_compat import _coerce_json_strings
@@ -293,6 +304,16 @@ def main() -> int:
     check("the search result reaches the UI as a sources card", disp.get("type") == "web_sources"
           and disp["queries"] == ["mercury bank fees", "mercury pricing plans"] and disp["sources"])
     final = "".join(e.data.get("text", "") for e in evts if e.type == "assistant.delta")
+    inline_answer = PLAN["answer"]
+    PLAN["answer"] = "Mercury's plans:\n\n- Basic checking with no monthly fees\n- Plus at $35 per month\n\nSources: [{mercury}], [{nerdwallet}]."
+    run_list = ask("usr_a", "list mercury's plans")
+    evts2 = backend.eventbus.read_since(run_list.run_id, -1)
+    final2 = "".join(e.data.get("text", "") for e in evts2 if e.type == "assistant.delta")
+    flags = {x["site"]: x["cited"] for x in backend.run_sources(run_list.run_id)}
+    check("an answer that lists its sources at the end: the line goes, the sources count as cited",
+          "Sources" not in final2 and ",," not in final2 and flags.get("mercury.com") and flags.get("nerdwallet.com"),
+          f"{final2!r} {flags}")
+    PLAN["answer"] = inline_answer
     check("unsupported citations are removed before you see the answer",
           final.count("[") == 2 and "Moon." in final and backend.citation_stats[run.run_id]["removed"] == 1, final)
 

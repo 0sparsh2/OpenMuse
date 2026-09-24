@@ -548,7 +548,7 @@ class ApiBackend:
         from urllib.parse import urlparse
         from search.service import WebSearch
         cited = {int(n) for m in WebSearch.CITE.finditer(run.final_text or "")
-                 for n in re.findall(r"\d{1,3}", m.group(0))}
+                 for n in re.findall(r"\d{1,3}", m.group(0))} | svc.listed_sources(run.run_id)
         out = []
         for s in svc.sources(run.run_id):
             host = (urlparse(s["url"]).hostname or "").lower()

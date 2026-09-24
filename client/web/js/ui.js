@@ -197,12 +197,19 @@
   }
   function webSources(m) {
     const map = new Map();
-    (m.sources || []).forEach((src) => map.set(Number(src.n), src));   // saved with the answer (survives reloads)
     (m.blocks || []).forEach((b) => {
       if (b.display && b.display.type === "web_sources") (b.display.sources || []).forEach((src) => map.set(Number(src.n), src));
       if (b.display && b.display.source && b.display.source.n) map.set(Number(b.display.source.n), b.display.source);
     });
+    // the list saved with the finished answer wins (it knows which were cited; survives reloads)
+    (m.sources || []).forEach((src) => map.set(Number(src.n), { ...(map.get(Number(src.n)) || {}), ...src }));
     return map;
+  }
+  // after removing markers: no ",,,", no " .", no empty "Sources:" line
+  function tidyCites(t) {
+    return String(t || "").replace(/(?:\s*,)+\s*(?=[.;:!?]|$)/gm, "").replace(/[ \t]+([.,;:!?])/g, "$1")
+      .replace(/^[ \t>*_-]*(?:\*\*)?(?:sources?|references?|citations?)(?:\*\*)?\s*[:：-]?\s*(?:\*\*)?[\s,.;]*$/gim, "")
+      .replace(/\n{3,}/g, "\n\n").trim();
   }
   const CITE_RE = /\[(\d{1,3}(?:\s*,\s*\d{1,3})*)\](?!\()|【(\d{1,3}(?:\s*[,，]\s*\d{1,3})*)】/g;
   function citedNumbers(text) {
@@ -229,7 +236,7 @@
   function sourcesRow(text, srcs) {
     const cited = citedNumbers(text);
     const all = [...srcs.values()].sort((a, b) => a.n - b.n);
-    const used = all.filter((s) => cited.has(Number(s.n)));
+    const used = all.filter((s) => s.cited || cited.has(Number(s.n)));
     const shown = (used.length ? used : all).slice(0, 6);
     const row = el("div", { class: "mc-srcrow", role: "group", "aria-label": "Sources" });
     row.appendChild(el("span", { class: "mc-srcrow-l", text: used.length ? "Sources" : "Read" }));
@@ -268,8 +275,8 @@
     const x = el("button", { type: "button", class: "bv-x", "aria-label": "Close", text: "✕" });
     head.appendChild(x);
     sheet.appendChild(head);
-    const groups = [["Cited", [...srcs.values()].filter((s) => cited.has(Number(s.n)))],
-                    ["Also read", [...srcs.values()].filter((s) => !cited.has(Number(s.n)))]];
+    const isCited = (s) => s.cited || cited.has(Number(s.n));
+    const groups = [["Cited", [...srcs.values()].filter(isCited)], ["Also read", [...srcs.values()].filter((s) => !isCited(s))]];
     groups.forEach(([label, list]) => {
       if (!list.length) return;
       sheet.appendChild(el("div", { class: "src-sheet-g", text: label }));
@@ -604,7 +611,7 @@
           const bub = el("div", { class: "mc-bubble bot" });
           const srcs = webSources(m);
           // no known sources: never show bare [2, 3] markers
-          bub.innerHTML = srcs.size ? renderCited(m.text, srcs) : renderRich(String(m.text).replace(CITE_RE, "").replace(/\s+([.,;:!?])/g, "$1"));
+          bub.innerHTML = srcs.size ? renderCited(tidyCites(m.text), srcs) : renderRich(tidyCites(String(m.text).replace(CITE_RE, "")));
           thread.appendChild(el("div", { class: "mc-row bot" }, [bub]));
           if (srcs.size && !m.running) thread.appendChild(el("div", { class: "mc-row bot" }, [sourcesRow(m.text, srcs)]));
         }

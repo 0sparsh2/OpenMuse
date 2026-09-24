@@ -95,8 +95,14 @@ Before the answer is shown:
 - Each cited sentence is compared with its source's passages. A citation stays only
   if the wording overlaps (≥ 35%) or the sentence is semantically similar (cosine ≥
   0.45), **and** any numbers in the sentence appear in the source.
+- A "Sources: [1], [2]…" line that the model writes itself isn't treated as a claim.
+  It's taken out, since the app shows sources under the answer, and the sources it
+  listed count as cited.
 - Unsupported or made-up citation numbers are removed. The sentence itself stays;
-  only the chip goes. The counts are recorded per run (`citation_stats`).
+  only the chip goes. Leftovers like ",,," or an empty "Sources:" line are cleaned
+  up. The counts are recorded per run (`citation_stats`).
+- If a query about something "upcoming" or "latest" uses a past year, the search
+  result tells the model today's date so it can search again with the right year.
 
 ## Jev (TypeSafe AI)
 
@@ -172,7 +178,7 @@ The interface is `search/engines.py::SearchProvider.search(query, recency_days, 
 | Search service alone (live DuckDuckGo, Jev, NIM embeddings) | 3–6s per search |
 | Whole answers with the live model | Pricing question ~20s (3 queries); latest F1 result ~28s (3 searches after Jev flagged thin results); research comparison ~106s with 8 verified citations |
 | Jev on the local test pages (`demo_cu_jev.py`) | Correct on cookie banner, sign-in wall, results page, "task done", a payment "Continue" the keyword check missed, and a disguised human check |
-| Tests | `demo_search.py` 60/60, `demo_cu_jev.py` 16/16 |
+| Tests | `demo_search.py` 65/65, `demo_cu_jev.py` 16/16 |
 
 Most of the time in a searched answer goes to the main model's reasoning between
 steps, not to the search itself.

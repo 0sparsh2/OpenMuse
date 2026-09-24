@@ -197,6 +197,14 @@ class WebSearch:
         note = ("Cite sources inline as [n] right after the claims they support." if enough is None or enough >= 0.35
                 else "These results look thin for this question: search again once with different or more specific "
                      "queries (or a different recency), then answer with what you found and say what's uncertain.")
+        # "upcoming India squad 2024": the model assumed an old year for a current question
+        year = time.gmtime(self.clock()).tm_year
+        old_years = sorted({int(y) for q in queries for y in re.findall(r"\b(20\d\d)\b", q) if int(y) < year})
+        if old_years and re.search(r"\b(upcoming|latest|next|current|currently|this (season|year|week|month)|new|now|today)\b",
+                                   question + " " + " ".join(queries), re.I):
+            note += (f" Note: your queries used {', '.join(map(str, old_years))}, but today is "
+                     f"{time.strftime('%Y-%m-%d', time.gmtime(self.clock()))}. For current or upcoming events, "
+                     f"check the results are from this year and search again with {year} if they aren't.")
         return {"queries": queries, "question": question, "sources": out_sources, "found": len(candidates),
                 "read": len(pages), "ranked_by": how,
                 "enough": None if enough is None else round(enough, 2), "ms": int((self.clock() - t0) * 1000),
@@ -289,10 +297,42 @@ class WebSearch:
                       lambda m: "[" + ", ".join(dict.fromkeys(re.findall(r"\d{1,3}", m.group(0)))) + "]", text)
         return text
 
+    SOURCES_LINE = re.compile(r"^[ \t>*_-]*(?:\*\*)?(?:sources?|references?|citations?|cited)(?:\*\*)?\s*[:：-]?\s*(?:\*\*)?\s*"
+                              r"((?:\[\d{1,3}(?:\s*,\s*\d{1,3})*\]|[\s,;.&]|and)*)\s*$", re.I | re.M)
+
+    @classmethod
+    def split_sources_line(cls, text: str) -> tuple[str, set[int]]:
+        """A model-written "Sources: [1], [2]" line isn't a claim: take it out (the app
+        shows sources under the answer) and remember which numbers it listed."""
+        listed: set[int] = set()
+
+        def take(m):
+            listed.update(int(n) for n in re.findall(r"\d{1,3}", m.group(1) or ""))
+            return ""
+        text = cls.SOURCES_LINE.sub(take, text or "")
+        return re.sub(r"\n{3,}", "\n\n", text).rstrip(), listed
+
+    @staticmethod
+    def tidy(text: str) -> str:
+        """Clean up after removed markers: no ' .', no ',,,', no empty 'Sources:' lines."""
+        text = re.sub(r"(?:\s*,)+\s*(?=[.;:!?]|$)", "", text, flags=re.M)      # ", , ,." -> "."
+        text = re.sub(r"[ \t]+([.,;:!?])", r"\1", text)
+        text = re.sub(r"^[ \t>*_-]*(?:\*\*)?(?:sources?|references?|citations?)(?:\*\*)?\s*[:：-]?\s*(?:\*\*)?[\s,.;]*$", "", text,
+                      flags=re.I | re.M)
+        return re.sub(r"\n{3,}", "\n\n", text).rstrip()
+
+    def listed_sources(self, run_id: str) -> set[int]:
+        st = self._runs.get(run_id)
+        return set(st.get("listed", set())) if st else set()
+
     def verify_citations(self, run_id: str, text: str) -> tuple[str, dict]:
         text = self.normalize_citations(text)
         st = self._runs.get(run_id)
         stats = {"checked": 0, "removed": 0}
+        text, listed = self.split_sources_line(text)
+        if st is not None and listed:
+            known = {s["n"] for s in st["sources"].values()}
+            st.setdefault("listed", set()).update(n for n in listed if n in known)
         if not st or not text or not self.CITE.search(text):
             return text, stats
         by_n = {s["n"]: s for s in st["sources"].values()}
@@ -341,4 +381,4 @@ class WebSearch:
             return re.sub(r"\s+([.!?,;:])", r"\1", self.CITE.sub(sub, sent)) if bad else sent
         for sent in drop:
             text = text.replace(sent, fix(sent), 1)
-        return text, stats
+        return self.tidy(text), stats
