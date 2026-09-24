@@ -188,8 +188,10 @@ class UiHandler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         try:
             if path == "/" or path == "/index.html":
-                return self._serve_static("index.html")
-            if path.startswith("/css/") or path.startswith("/js/") or path.startswith("/icons/"):
+                return self._serve_static("index.html", extra={"Cache-Control": "no-cache"})
+            if path.startswith("/css/") or path.startswith("/js/"):
+                return self._serve_static(path.lstrip("/"), extra={"Cache-Control": "no-cache"})
+            if path.startswith("/icons/"):
                 return self._serve_static(path.lstrip("/"))
             if path in ("/manifest.webmanifest", "/sw.js"):
                 # the worker must always be re-fetched so app updates land

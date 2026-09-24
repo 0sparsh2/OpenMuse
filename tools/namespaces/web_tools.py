@@ -49,10 +49,11 @@ def register(registry: ToolRegistry) -> None:
                                 region=region or "wt-wt")
 
     def search_card(out):
+        # compact: a real search has 10+ sources with long URLs; the card must stay under its cap
         return {"type": "web_sources", "queries": out.get("queries", []), "found": out.get("found", 0),
                 "read": out.get("read", 0),
-                "sources": [{"n": s["n"], "title": s["title"], "url": s["url"], "site": s["site"],
-                             "date": s.get("date", "")} for s in out.get("sources", [])]}
+                "sources": [{"n": s["n"], "title": (s["title"] or "")[:100], "url": s["url"][:400], "site": s["site"],
+                             "date": s.get("date", "")} for s in out.get("sources", [])[:20]]}
 
     registry.register(ToolDefinition(
         name="web.search", version="1.0.0",
@@ -74,7 +75,7 @@ def register(registry: ToolRegistry) -> None:
         output_schema={"type": "object", "required": ["queries", "sources"]},
         capabilities=["network.fetch.public"], side_effect="none", idempotency="pure",
         default_timeout_ms=45_000, data_classes_accepted=["public"], execute=search,
-        display=search_card, max_view_chars=17_000,
+        display=search_card, max_view_chars=17_000, max_display_bytes=12_000,
     ))
 
     # -- web.read -------------------------------------------------------------------------
@@ -98,7 +99,7 @@ def register(registry: ToolRegistry) -> None:
                               "sources": [{"n": out["n"], "title": out.get("title") or _site(out["url"]),
                                            "url": out["url"], "site": _site(out["url"]),
                                            "date": out.get("date", "")}]} if out.get("n") else None),
-        max_view_chars=10_000,
+        max_view_chars=10_000, max_display_bytes=4_000,
     ))
 
     # -- web.weather (Open-Meteo, keyless) --------------------------------------------------

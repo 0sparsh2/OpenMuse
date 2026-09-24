@@ -225,7 +225,8 @@ def _execute_one(ctx: ExecutionContext, call: PrevalidatedCall) -> dict:
         try:
             card = display_fn(output)
             blob = json.dumps(card, ensure_ascii=False, default=str) if card else ""
-            if card and len(blob) <= 2048 and not looks_like_secret(blob):
+            if card and len(blob.encode("utf-8")) <= (getattr(call.tool, "max_display_bytes", None) or 2048) \
+                    and not looks_like_secret(blob):
                 payload["display"] = card
         except Exception:
             pass  # a card is a nicety; never fail the call over it

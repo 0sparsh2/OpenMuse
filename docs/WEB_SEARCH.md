@@ -178,7 +178,7 @@ The interface is `search/engines.py::SearchProvider.search(query, recency_days, 
 | Search service alone (live DuckDuckGo, Jev, NIM embeddings) | 3–6s per search |
 | Whole answers with the live model | Pricing question ~20s (3 queries); latest F1 result ~28s (3 searches after Jev flagged thin results); research comparison ~106s with 8 verified citations |
 | Jev on the local test pages (`demo_cu_jev.py`) | Correct on cookie banner, sign-in wall, results page, "task done", a payment "Continue" the keyword check missed, and a disguised human check |
-| Tests | `demo_search.py` 67/67, `demo_cu_jev.py` 16/16 |
+| Tests | `demo_search.py` 68/68, `demo_cu_jev.py` 16/16 |
 
 Most of the time in a searched answer goes to the main model's reasoning between
 steps, not to the search itself.

@@ -63,6 +63,12 @@ class FakeEngine(SearchProvider):
         self.calls.append((query, recency_days, region))
         if "nothing" in query:
             return []
+        if "many" in query:   # a realistic result page: 12 sites, long titles and URLs
+            return [Result(f"https://www.news-site-{i}.example.com/sports/cricket/2026/09/16/india-squad-announcement-west-indies-"
+                           f"odi-series-rohit-kohli-return-maiden-call-ups-{i:03d}-live-updates-and-analysis",
+                           f"India squad for West Indies ODIs: Rohit, Kohli return; maiden call-ups for Nabi and Dhir ({i})",
+                           "India have named their ODI squad for the West Indies series starting 27 September.")
+                    for i in range(12)]
         rs = [Result("https://mercury.com/pricing", "Mercury Pricing | Plans", "Mercury pricing: free, Plus $35/mo, Pro $350/mo."),
               Result("https://www.nerdwallet.com/mercury-review?utm_source=x", "Mercury Review 2026 - NerdWallet",
                      "An honest review of Mercury business banking fees."),
@@ -311,6 +317,18 @@ def main() -> int:
     check("the search result reaches the UI as a sources card", disp.get("type") == "web_sources"
           and disp["queries"] == ["mercury bank fees", "mercury pricing plans"] and disp["sources"])
     final = "".join(e.data.get("text", "") for e in evts if e.type == "assistant.delta")
+    # a real-sized result: the sources card must still reach the app (it used to be dropped over 2 KB)
+    PLAN["calls"] = [("web.search", {"queries": ["many results squad"], "question": "upcoming India ODI squad"})]
+    saved_answer = PLAN["answer"]
+    PLAN["answer"] = "India named a 15-player squad."
+    run_many = ask("usr_a", "india odi squad for west indies")
+    card = next((e.data.get("display") for e in backend.eventbus.read_since(run_many.run_id, -1)
+                 if e.type == "tool.result"), None) or {}
+    check("a real-sized search (12 sites, long URLs) still sends its sources card to the app",
+          len(card.get("sources", [])) >= 10 and len(json.dumps(card)) > 2048, str(len(card.get("sources", []))))
+    PLAN["calls"] = [("web.search", {"queries": ["mercury bank fees", "mercury pricing plans"],
+                                     "question": "What does Mercury cost?", "recency_days": 90})]
+    PLAN["answer"] = saved_answer
     inline_answer = PLAN["answer"]
     PLAN["answer"] = "Mercury's plans:\n\n- Basic checking with no monthly fees\n- Plus at $35 per month\n\nSources: [{mercury}], [{nerdwallet}]."
     run_list = ask("usr_a", "list mercury's plans")

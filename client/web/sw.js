@@ -1,6 +1,6 @@
 /* OpenMuse service worker (issue #17): app shell cache, share target, web push.
    API responses (/v1/*) are never cached — user data stays on the server. */
-const VERSION = "om-shell-v2";
+const VERSION = "om-shell-v3";
 const SHELL = ["/", "/css/tokens.css", "/css/app.css", "/css/chat.css", "/js/openmuse-api.js", "/js/ui.js",
                "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/badge-96.png"];
 const SHARE_CACHE = "om-share";
@@ -11,8 +11,17 @@ self.addEventListener("install", (e) => {
 
 self.addEventListener("activate", (e) => {
   e.waitUntil(caches.keys()
-    .then((keys) => Promise.all(keys.filter((k) => k !== VERSION && k !== SHARE_CACHE).map((k) => caches.delete(k))))
-    .then(() => self.clients.claim()));
+    .then((keys) => {
+      const upgrading = keys.some((k) => k.startsWith("om-shell-") && k !== VERSION);
+      return Promise.all(keys.filter((k) => k !== VERSION && k !== SHARE_CACHE).map((k) => caches.delete(k)))
+        .then(() => self.clients.claim())
+        .then(async () => {
+          // an update: reload open tabs so they run the new app, not the copy they started with
+          if (!upgrading) return;
+          const wins = await self.clients.matchAll({ type: "window" });
+          await Promise.all(wins.map((w) => w.navigate(w.url).catch(() => null)));
+        });
+    }));
 });
 
 async function handleShare(request) {
